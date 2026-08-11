@@ -239,3 +239,30 @@ wandb/
 # Large binaries, fetched from upstream rather than versioned here.
 *.caffemodel
 *.weights
+
+# Raw video and extracted frames for the hand-built tracking dataset. The ARC
+# Robotics footage is licensed and must not be redistributed. Per-frame
+# ANNOTATIONS are committed (small, diffable text); the pixels are not.
+*.mp4
+*.avi
+*.mkv
+*.mov
+*.webm
+*.flv
+frames/
+
+# Model weights and checkpoints, any framework. Fetched or retrained, never
+# versioned here - see README for the Git LFS note if one must be preserved.
+*.pth
+*.ckpt
+*.h5
+*.tflite
+*.pb
+*.npy
+*.npz
+
+# Roboflow SDK default download locations, in case the raw export snippet is
+# used instead of scripts/download_data.py (which pins the location).
+datasets/
+dji-roco-central-*/
+DJI-ROCO-Central-*/

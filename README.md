@@ -26,11 +26,20 @@ A "perception model" here means one **detection** model paired with one **tracki
 
 ## Setup
 
+From a fresh clone:
+
 ```bash
 python -m venv .venv
 .venv\Scripts\activate          # PowerShell:  .venv\Scripts\Activate.ps1
 pip install roboflow ultralytics opencv-python numpy
+
+git config core.hooksPath scripts/hooks   # enable the large-file commit guard
+
+python scripts/download_data.py           # fetch the dataset (~1.4 GB)
+python scripts/verify_data.py             # confirm it matches the manifest
 ```
+
+The clone itself is under a megabyte — the dataset arrives in the download step.
 
 Install the **CUDA build** of PyTorch, not the CPU-only wheel, and confirm the GPU is
 visible before training:
@@ -82,6 +91,21 @@ The same reasoning covers `runs/`, `*.pt` and other training artifacts: they are
 byte-distinct on every run, so Git stores a full copy each time rather than a diff. If a
 specific trained weight file needs to be preserved for the write-up, use Git LFS or attach
 it to a release rather than committing it directly.
+
+### Keeping the repository small
+
+`git add .` is safe to use here. Two layers stand behind it:
+
+1. **`.gitignore`** excludes everything that would bloat the repo — the dataset, `runs/`,
+   model weights in any framework (`*.pt`, `*.pth`, `*.ckpt`, `*.caffemodel`, ...), raw
+   video and extracted frames, and the Roboflow SDK's default download directories.
+2. **A pre-commit hook** (`scripts/hooks/pre-commit`) rejects any staged file over 50 MB,
+   whatever it is called. `.gitignore` only catches patterns anticipated in advance; the
+   hook catches everything else. Enable it once per clone:
+   `git config core.hooksPath scripts/hooks`.
+
+What *should* be committed: source, configs, benchmark result tables, and the hand-built
+tracking annotations.
 
 ### Attribution
 

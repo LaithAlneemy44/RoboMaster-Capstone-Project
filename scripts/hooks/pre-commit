@@ -1,0 +1,40 @@
+#!/bin/sh
+# Safety net so `git add .` can be used without auditing what it swept up.
+#
+# .gitignore only blocks patterns we thought of in advance. This blocks any
+# large file regardless of extension - the failure mode that actually costs you,
+# since git history cannot be shrunk again without a rewrite and a force-push.
+#
+# Install:  git config core.hooksPath scripts/hooks
+
+LIMIT_MB=50
+LIMIT=$((LIMIT_MB * 1024 * 1024))
+failed=0
+
+while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    [ -f "$file" ] || continue
+    size=$(wc -c < "$file" | tr -d ' ')
+    if [ "$size" -gt "$LIMIT" ]; then
+        printf 'BLOCKED  %s MB  %s\n' "$((size / 1024 / 1024))" "$file"
+        failed=1
+    fi
+done <<EOF
+$(git diff --cached --name-only --diff-filter=ACM)
+EOF
+
+if [ "$failed" -ne 0 ]; then
+    cat <<'MSG'
+
+Commit blocked: staged file(s) exceed 50 MB.
+
+Large binaries are almost never meant to be committed. Consider:
+  * a dataset or download    -> add it to .gitignore, fetch it with a script
+  * trained weights          -> keep local, or use Git LFS / a release asset
+  * a genuinely needed file  -> git commit --no-verify
+
+MSG
+    exit 1
+fi
+
+exit 0
