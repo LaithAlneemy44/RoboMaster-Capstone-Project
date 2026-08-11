@@ -216,3 +216,26 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---------------------------------------------------------------------------
+# Project-specific
+# ---------------------------------------------------------------------------
+
+# Datasets are NOT committed. They are a version-pinned Roboflow export and are
+# re-downloadable with `python scripts/download_data.py`. Integrity is checked
+# against data/manifest.sha256. See README.md ("Dataset") for the reasoning.
+Datasets/
+
+# Training artifacts. These are byte-distinct on every run, so git stores a full
+# copy each time and the repo grows without bound. Nothing here is reproducible
+# from history anyway - rerun the training script instead.
+runs/
+wandb/
+*.pt
+*.onnx
+*.engine
+
+# Pretrained third-party weights (GOTURN caffemodel, SSD checkpoints, ...).
+# Large binaries, fetched from upstream rather than versioned here.
+*.caffemodel
+*.weights
