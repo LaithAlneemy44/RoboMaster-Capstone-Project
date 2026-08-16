@@ -229,6 +229,33 @@ python scripts/train_ssd.py  --probe --backbone large --imgsz 960 --batch 8
 On CUDA OOM, lower `--batch`. **Never lower `--imgsz` to escape OOM** — it is the
 variable under study, and changing it silently puts two models on different rungs.
 
+### Running the sweep — and stopping it
+
+`scripts/run_sweep.py` runs every config through train → predict → score. The full
+ladder is tens of GPU-hours, i.e. several evenings, so stopping it is a first-class
+operation rather than an accident:
+
+```bash
+python scripts/run_sweep.py --dry-run --stop-after 8   # plan an evening
+python scripts/run_sweep.py --stop-after 8             # run it
+```
+
+| To stop | What happens |
+|---|---|
+| **Ctrl-C** | Stops immediately. Both trainers checkpoint every epoch, so you lose at most the epoch in flight. Re-run the sweep to resume that config from `last.pt`. |
+| **`New-Item STOP`** | Finishes the config it is on, then exits cleanly. Delete `STOP` before re-running. |
+| **`--stop-after H`** | Refuses to *start* a config that cannot finish within H hours. |
+
+Resuming restores the optimizer, gradient scaler and LR schedule — not just the
+weights — so a resumed run continues its cosine schedule rather than restarting it.
+Checkpoints are written to a temp file and renamed, because interrupting mid-write
+would otherwise corrupt the exact file the resume depends on.
+
+> A config counts as trained only when its run directory contains a `.trained` marker,
+> written on clean completion. **`best.pt` is not proof** — both trainers write it
+> during training, so treating it as "done" would silently score a half-trained model
+> and put a bogus row in the results table.
+
 ### Why MobileNet-SSD is assembled by hand
 
 `torchvision.models.detection.ssdlite320_mobilenet_v3_large` hard-codes 320 and
