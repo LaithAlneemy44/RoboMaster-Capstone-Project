@@ -394,6 +394,9 @@ def main() -> None:
                 print("Already at the requested epoch count - nothing to do.")
                 return
 
+    # Bound before the loop so the KeyboardInterrupt handler can report a real epoch
+    # even if the interrupt lands during DataLoader startup.
+    epoch = start_epoch
     try:
         for epoch in range(start_epoch, epochs):
             model.train()

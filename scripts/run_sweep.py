@@ -118,6 +118,11 @@ def run(label: str, command: list[str]) -> tuple[bool, float]:
     started = time.perf_counter()
     result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
     elapsed = time.perf_counter() - started
+    # Ctrl-C reaches the whole process group, so the child exits 130. Without this it
+    # would look like an ordinary failure and the sweep would march on to the next
+    # config - the opposite of what someone pressing Ctrl-C wants.
+    if result.returncode == 130:
+        raise KeyboardInterrupt
     if result.returncode != 0:
         tail = (result.stdout + result.stderr).strip().splitlines()[-6:]
         print(f"    [{label}] FAILED after {elapsed / 60:.1f} min", flush=True)
@@ -193,7 +198,23 @@ def main() -> None:
     PRED_DIR.mkdir(parents=True, exist_ok=True)
     started_all = time.perf_counter()
     done, failed = [], []
+    try:
+        sweep(args, pending, started_all, done, failed)
+    except KeyboardInterrupt:
+        print("\n\nInterrupted. Both trainers checkpoint every epoch, so at most the "
+              "epoch in flight\nis lost. Re-run this script to resume the partial "
+              "config and carry on.")
 
+    total = (time.perf_counter() - started_all) / 3600
+    print(f"\n{'=' * 70}")
+    print(f"sweep ran {total:.1f} h - {len(done)} scored, {len(failed)} failed")
+    if failed:
+        print(f"failed: {', '.join(failed)}")
+        print("Re-run this script to retry them; scored configs are skipped.")
+    print(f"results: {RESULTS.relative_to(ROOT)}")
+
+
+def sweep(args, pending, started_all, done, failed) -> None:
     for index, (family, variant, imgsz, batch, hours, name) in enumerate(pending, start=1):
         if STOP_FILE.is_file():
             print(f"\n{STOP_FILE.name} found - stopping cleanly before {name}.")
@@ -260,14 +281,6 @@ def main() -> None:
         ])
         log_outcome(name, "evaluate", "ok" if ok else "failed", seconds, "")
         (done if ok else failed).append(name)
-
-    total = (time.perf_counter() - started_all) / 3600
-    print(f"\n{'=' * 70}")
-    print(f"sweep finished in {total:.1f} h - {len(done)} scored, {len(failed)} failed")
-    if failed:
-        print(f"failed: {', '.join(failed)}")
-        print("Re-run this script to retry them; scored configs are skipped.")
-    print(f"results: {RESULTS.relative_to(ROOT)}")
 
 
 if __name__ == "__main__":
