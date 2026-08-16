@@ -23,6 +23,8 @@ A "perception model" here means one **detection** model paired with one **tracki
 | `scripts/check_gpu.py` | Proves the GPU can actually launch a kernel (not just `is_available()`) |
 | `scripts/make_splits.py` | Builds train/val lists for both formats without touching `Datasets/` |
 | `scripts/train_yolo.py` | Fine-tunes YOLO from COCO-pretrained weights, GPU-only |
+| `scripts/predict_to_coco.py` | Runs a trained model over val, writes COCO detections |
+| `scripts/evaluate_detection.py` | **The single evaluator** — scores every model family |
 | `data/manifest.sha256` | SHA-256 of all 7973 dataset files (provenance + integrity) |
 | `data/splits/assignment.csv` | **The split of record** — every image's clip and train/val side |
 | `data/roco_central.yaml` | Generated Ultralytics data config — the training entry point |
@@ -200,6 +202,47 @@ python scripts/make_splits.py --from-assignment
 Run that after cloning, after moving the project, or on Colab. It replays the recorded
 assignment exactly rather than re-deriving it, so it does not depend on RNG
 reproducibility or on the flags originally used.
+
+## Evaluation — one evaluator for every model
+
+Ultralytics and torchvision each compute mAP their own way, and the two do not agree.
+If YOLO were scored by one and MobileNet-SSD by the other, the project's headline
+comparison would be between two different metrics. So every detection model is scored
+by `scripts/evaluate_detection.py` instead, from a COCO-format predictions file:
+
+```bash
+python scripts/predict_to_coco.py --family yolo \
+    --weights runs/detect/fast_640/weights/best.pt --imgsz 640 --out preds.json
+python scripts/evaluate_detection.py --predictions preds.json --name fast_640
+```
+
+Results append to `results/detection.csv`, one row per config.
+
+**`ignore` policy.** Models train on all five classes — learning to tag an ambiguous
+robot as `ignore` beats misfiring it as `car` — and `ignore` is then excluded at
+scoring time: its ground truth is removed so it cannot be a miss, its predictions are
+dropped, and any prediction overlapping an ignore region at IoA ≥ 0.5 is suppressed so
+it cannot be a false positive. That last step is why COCO's own `iscrowd` is not
+sufficient — `iscrowd` only excludes matches within the *same* category.
+
+**Confidence intervals** come from bootstrapping over the 397 val images. They measure
+variance *within* one match, not across matches — see the split limitation above.
+
+### Self-test
+
+```bash
+python scripts/evaluate_detection.py --gt-as-predictions   # must report mAP 1.0000
+```
+
+Scoring the ground truth against itself is what actually proves image ids and
+coordinate spaces line up. It is worth keeping: it is what caught the id bug below.
+
+> **COCO annotation ids must be 1-based.** `COCOeval` stores the matched ground-truth
+> id in `dtMatches` and then tests it with `logical_and(dtm, ...)`, so an annotation
+> with id `0` is falsy and its match is silently rescored as a false positive. With
+> 0-based ids the self-test reported 0.9975 instead of 1.0, and the loss landed
+> entirely on `armor` — the class holding 66% of all instances. `make_splits.py` now
+> numbers images and annotations from 1.
 
 ## Open decisions
 

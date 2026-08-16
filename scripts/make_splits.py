@@ -61,6 +61,15 @@ ORIG_SPLITS = ("train", "valid", "test")
 # Index order must match the export's data.yaml `names` list.
 CLASS_NAMES = ["armor", "base", "car", "ignore", "watcher"]
 
+# "ignore" marks robots that are real but too ambiguous to score against - 387
+# instances, 0.67% of the dataset. Models still TRAIN on it (learning to tag an
+# ambiguous robot as `ignore` is better than misfiring it as `car`), but its
+# predictions are discarded at evaluation. Marking it iscrowd=1 records that in
+# the annotations themselves; scripts/evaluate_detection.py does the actual
+# suppression, because COCO's iscrowd only excludes matches within the SAME
+# category and an ignore region has to suppress detections of any class.
+IGNORE_CLASS = "ignore"
+
 # Roboflow names every frame "<clip>_<frame>_jpg.rf.<hash>.jpg". The frame index is
 # always the last numeric field, so a greedy prefix takes the clip name intact -
 # clip names themselves contain underscores and digits ("-VsBorn-of-Fire_BO2_1").
@@ -211,6 +220,14 @@ def write_coco(split_names: dict[str, list[str]], origin: dict[str, str]) -> Non
         if source[split]["categories"] != categories:
             sys.exit(f"Category list in {split} differs from train - cannot merge.")
 
+    ignore_id = next((c["id"] for c in categories if c["name"] == IGNORE_CLASS), None)
+    if ignore_id is None:
+        sys.exit(
+            f"No {IGNORE_CLASS!r} category in the COCO export "
+            f"(found: {[c['name'] for c in categories]}).\n"
+            "The evaluator's ignore-region policy depends on it - see IGNORE_CLASS."
+        )
+
     # image_id -> annotations, per original split, so lookup stays O(1).
     by_image = {split: _group(data["annotations"]) for split, data in source.items()}
     image_by_name = {
@@ -220,7 +237,12 @@ def write_coco(split_names: dict[str, list[str]], origin: dict[str, str]) -> Non
 
     for split, names in split_names.items():
         images, annotations = [], []
-        for new_id, name in enumerate(names):
+        marked = 0
+        # ids are 1-based ON PURPOSE. COCOeval stores the matched ground-truth id in
+        # dtMatches and then tests it with logical_and(dtm, ...) - so an annotation
+        # with id 0 is falsy, its match is silently scored as a false positive, and
+        # the AP of whichever class owns it is quietly deflated.
+        for new_id, name in enumerate(names, start=1):
             orig = origin[name]
             src = image_by_name[orig].get(name)
             if src is None:
@@ -232,8 +254,11 @@ def write_coco(split_names: dict[str, list[str]], origin: dict[str, str]) -> Non
             images.append(img)
             for ann in by_image[orig].get(old_id, []):
                 ann = dict(ann)
-                ann["id"] = len(annotations)
+                ann["id"] = len(annotations) + 1
                 ann["image_id"] = new_id
+                if ann["category_id"] == ignore_id:
+                    ann["iscrowd"] = 1
+                    marked += 1
                 annotations.append(ann)
 
         merged = {
@@ -244,6 +269,7 @@ def write_coco(split_names: dict[str, list[str]], origin: dict[str, str]) -> Non
             "annotations": annotations,
         }
         (OUT_DIR / f"coco_{split}.json").write_text(json.dumps(merged), encoding="utf-8")
+        print(f"  coco_{split}.json: {marked} {IGNORE_CLASS} annotations marked iscrowd=1")
 
 
 def _group(annotations: list[dict]) -> dict[int, list[dict]]:
