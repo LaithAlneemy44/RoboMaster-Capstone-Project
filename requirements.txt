@@ -1,0 +1,13 @@
+﻿# Pinned for reproducibility. PyTorch is NOT listed here - it must come from the
+# cu126 index, because the GTX 1060 is Pascal (sm_61) and CUDA 12.8+ dropped it:
+#   pip install --index-url https://download.pytorch.org/whl/cu126 torch torchvision
+# Verified working on this machine: torch 2.13.0+cu126, torchvision 0.28.0+cu126
+
+matplotlib==3.11.1
+numpy==2.5.2
+opencv-python==5.0.0.93
+psutil==7.2.2
+pycocotools==2.0.11
+PyYAML==6.0.3
+requests==2.34.2
+ultralytics==8.4.120
