@@ -94,7 +94,16 @@ def build_ssd(
     backbone.train()
 
     head = SSDLiteHead(channels, anchor_gen.num_anchors_per_location(), num_classes, norm_layer)
-    return SSD(backbone, anchor_gen, (imgsz, imgsz), num_classes, head=head)
+    return SSD(
+        backbone, anchor_gen, (imgsz, imgsz), num_classes, head=head,
+        # torchvision defaults these to 0.01 / 200. Both are metric artifacts rather
+        # than modelling choices: mAP integrates the whole precision/recall curve, so
+        # a score floor truncates the curve and understates the model. YOLO's defaults
+        # are conf 0.001 / max_det 300, so matching them here keeps the two families
+        # comparable instead of handicapping SSD at the tail.
+        score_thresh=0.001,
+        detections_per_img=300,
+    )
 
 
 # --------------------------------------------------------------------------

@@ -313,6 +313,36 @@ sufficient — `iscrowd` only excludes matches within the *same* category.
 **Confidence intervals** come from bootstrapping over the 397 val images. They measure
 variance *within* one match, not across matches — see the split limitation above.
 
+### What is held constant, and what is not
+
+A cross-family comparison is only meaningful if the differences are the ones under
+study. Stated explicitly:
+
+**Equalised deliberately**
+
+| | |
+|---|---|
+| Train/val split | Identical image lists, from `assignment.csv` |
+| Resolution ladder | 320 / 640 / 960 for every model |
+| `ignore` policy | Same removal + IoA suppression, applied by the one evaluator |
+| Metric | `pycocotools` COCOeval for all families |
+| Score threshold | 0.001, and max 300 detections/image — SSD's torchvision defaults (0.01 / 200) would truncate its PR curve and understate it |
+| Seed | 0, `deterministic=True` |
+
+**Not equalised — inherent to the architectures, and to be reported as limitations**
+
+- **Preprocessing geometry.** YOLO letterboxes, preserving the 16:9 aspect ratio. SSD
+  squashes to a square. At 320 that distorts a 1920×1080 frame substantially, and
+  since armor is ~3.6 px at that rung, it plausibly matters more than the
+  architectural difference being measured.
+- **NMS IoU.** SSD 0.45, YOLO 0.7. Each is tuned to its own box distribution; forcing
+  one onto the other trades one bias for another.
+- **Augmentation.** Ultralytics applies mosaic, HSV jitter and more by default;
+  `train_ssd.py` applies horizontal flip and brightness jitter only. SSD's canonical
+  zoom-out/crop recipe is deliberately *not* used, because it changes effective object
+  scale — the variable the resolution ladder exists to measure.
+- **Optimiser and schedule.** Ultralytics' own defaults vs SGD + cosine here.
+
 ### Self-test
 
 ```bash
