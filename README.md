@@ -229,6 +229,20 @@ python scripts/train_ssd.py  --probe --backbone large --imgsz 960 --batch 8
 On CUDA OOM, lower `--batch`. **Never lower `--imgsz` to escape OOM** — it is the
 variable under study, and changing it silently puts two models on different rungs.
 
+`run_sweep.py` reads `results/probe.csv` directly rather than carrying its own copy of
+these numbers, and for each rung picks the largest probed batch whose peak VRAM stays
+under 4.3 GiB. A rung with no probe under that ceiling is excluded rather than run on
+a guess.
+
+> **Watch the dataloader, not just the GPU.** The first SSD probe pass had the ladder
+> running *backwards* — 320 cost 13.7 h against 5.5 h at 960 — with the GPU idling at
+> 2–3%. The dataset was handing the model native 1920×1080 frames and letting it
+> downscale on the GPU, which materialises a 24 MB float tensor per image and moves
+> ~800 MB per batch of 32 across PCIe. The larger batches used at low resolution were
+> hit hardest. Resizing in PIL before `to_tensor` — the same operation SSD's transform
+> would do anyway, just somewhere cheaper — cut `ssd_large@320` from 13.7 h to 1.0 h
+> and the SSD half of the sweep from 32 h to 13.5 h.
+
 ### Running the sweep — and stopping it
 
 `scripts/run_sweep.py` runs every config through train → predict → score. The full
