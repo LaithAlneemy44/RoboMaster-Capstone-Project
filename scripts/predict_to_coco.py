@@ -102,7 +102,12 @@ def predict_ssd(
     from train_ssd import build_ssd  # noqa: PLC0415 - built in Phase 3
 
     ckpt = torch.load(weights, map_location="cpu", weights_only=False)
-    model = build_ssd(ckpt["backbone"], ckpt["imgsz"], ckpt["num_classes"])
+    # The checkpoint's own imgsz wins: the model's anchors and head were built for it,
+    # and preprocessing at a different size would silently mis-scale every box.
+    ckpt_imgsz = int(ckpt["imgsz"])
+    if ckpt_imgsz != imgsz:
+        print(f"  note: --imgsz {imgsz} ignored; checkpoint was trained at {ckpt_imgsz}")
+    model = build_ssd(ckpt["backbone"], ckpt_imgsz, ckpt["num_classes"])
     model.load_state_dict(ckpt["model"])
     model.eval().to(device)
 
@@ -110,18 +115,26 @@ def predict_ssd(
     with torch.inference_mode():
         for start in range(0, len(targets), batch):
             chunk = targets[start : start + batch]
-            images = [
-                TF.to_tensor(Image.open(p).convert("RGB")).to(device) for _, p in chunk
-            ]
-            for (image_id, _), out in zip(chunk, model(images)):
-                # GeneralizedRCNNTransform.postprocess already rescales boxes back to
-                # the original image size; assert_native_scale() checks that holds.
+            images, scales = [], []
+            for _, path in chunk:
+                image = Image.open(path).convert("RGB")
+                native_w, native_h = image.size
+                # Must mirror RocoCoco.__getitem__: the dataset pre-resizes on the CPU,
+                # so the model was trained on squashed (imgsz, imgsz) input and emits
+                # boxes in that space rather than in native pixels.
+                image = image.resize((ckpt_imgsz, ckpt_imgsz), Image.BILINEAR)
+                images.append(TF.to_tensor(image).to(device))
+                scales.append((native_w / ckpt_imgsz, native_h / ckpt_imgsz))
+
+            for (image_id, _), (sx, sy), out in zip(chunk, scales, model(images)):
                 for box, label, score in zip(
                     out["boxes"].cpu(), out["labels"].cpu(), out["scores"].cpu()
                 ):
                     if float(score) < conf:
                         continue
                     x1, y1, x2, y2 = (float(v) for v in box)
+                    x1, x2 = x1 * sx, x2 * sx
+                    y1, y2 = y1 * sy, y2 * sy
                     detections.append({
                         "image_id": image_id,
                         "category_id": int(label),

@@ -1,0 +1,7 @@
+model,imgsz,batch,status,epoch_seconds,peak_vram_gib,est_100ep_hours
+yolo,960,8,ok,309.3,4.86,8.59
+yolo,640,16,ok,161.9,4.66,4.5
+yolo,320,32,ok,82.1,2.44,2.28
+fast,960,8,ok,177.4,2.9,4.93
+fast,640,16,ok,115.5,2.58,3.21
+fast,320,32,ok,59.7,1.41,1.66

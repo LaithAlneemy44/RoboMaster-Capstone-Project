@@ -104,14 +104,22 @@ def build_ssd(
 class RocoCoco:
     """Merged-COCO reader returning torchvision-detection targets.
 
-    Boxes stay in NATIVE 1920x1080 coordinates: SSD's GeneralizedRCNNTransform does
-    the resize itself and maps predictions back, which is what lets predict_to_coco
-    emit native-scale boxes with no manual rescaling.
+    Images are resized to (imgsz, imgsz) HERE, on the CPU in uint8, and boxes are
+    scaled to match. SSD's GeneralizedRCNNTransform squashes to exactly that square
+    anyway, so this is the identical operation moved somewhere far cheaper: handing
+    the model native 1080p materialises a 24 MB float tensor per image and ships
+    ~800 MB per batch of 32 across PCIe. Measured, that made 320 five times SLOWER
+    than 960 (13.7 h vs 5.5 h per 100 epochs) with the GPU sitting at 2-3%.
+
+    Consequence: predictions come back in imgsz space, so predict_to_coco.py and
+    evaluate_map() below must scale them to native before scoring against the
+    ground truth. to_native() is the one place that conversion is defined.
     """
 
-    def __init__(self, json_path: Path, train: bool):
+    def __init__(self, json_path: Path, train: bool, imgsz: int):
         data = json.loads(json_path.read_text(encoding="utf-8"))
         self.train = train
+        self.imgsz = imgsz
         self.images = data["images"]
         self.num_classes = max(c["id"] for c in data["categories"]) + 1
 
@@ -130,13 +138,17 @@ class RocoCoco:
 
         record = self.images[index]
         image = Image.open(COCO_ROOT / record["file_name"]).convert("RGB")
+        native_w, native_h = image.size
+        # Resize before to_tensor, so the big float tensor is never built at all.
+        image = image.resize((self.imgsz, self.imgsz), Image.BILINEAR)
+        sx, sy = self.imgsz / native_w, self.imgsz / native_h
 
         boxes, labels = [], []
         for ann in self.by_image.get(record["id"], ()):
             x, y, w, h = ann["bbox"]
             if w <= 0 or h <= 0:  # degenerate boxes make the loss NaN
                 continue
-            boxes.append([x, y, x + w, y + h])
+            boxes.append([x * sx, y * sy, (x + w) * sx, (y + h) * sy])
             labels.append(ann["category_id"])
 
         tensor = TF.to_tensor(image)
@@ -155,6 +167,13 @@ class RocoCoco:
             "labels": torch.as_tensor(labels, dtype=torch.int64),
         }
         return tensor, target
+
+    def to_native(self, index: int, box: list[float]) -> list[float]:
+        """Map an xyxy box from imgsz space back to the image's native pixels."""
+        record = self.images[index]
+        sx, sy = record["width"] / self.imgsz, record["height"] / self.imgsz
+        x1, y1, x2, y2 = box
+        return [x1 * sx, y1 * sy, x2 * sx, y2 * sy]
 
 
 def collate(batch):
@@ -181,11 +200,13 @@ def evaluate_map(model, val_set, device, val_json: Path, batch: int) -> float:
             chunk = [val_set[i] for i in range(start, min(start + batch, len(val_set)))]
             images = [img.to(device) for img, _ in chunk]
             for offset, output in enumerate(model(images)):
-                image_id = val_set.images[start + offset]["id"]
+                index = start + offset
+                image_id = val_set.images[index]["id"]
                 for box, label, score in zip(
                     output["boxes"].cpu(), output["labels"].cpu(), output["scores"].cpu()
                 ):
-                    x1, y1, x2, y2 = (float(v) for v in box)
+                    # Boxes come out in imgsz space because the dataset pre-resized.
+                    x1, y1, x2, y2 = val_set.to_native(index, [float(v) for v in box])
                     detections.append({
                         "image_id": image_id, "category_id": int(label),
                         "bbox": [x1, y1, x2 - x1, y2 - y1], "score": float(score),
@@ -273,8 +294,8 @@ def main() -> None:
     out_dir = ROOT / "runs" / ("probe" if args.probe else "ssd") / name
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    train_set = RocoCoco(train_json, train=True)
-    val_set = RocoCoco(val_json, train=False)
+    train_set = RocoCoco(train_json, train=True, imgsz=args.imgsz)
+    val_set = RocoCoco(val_json, train=False, imgsz=args.imgsz)
     num_classes = train_set.num_classes
     if args.overfit:
         # Deliberately keeps the SAME images for train and val: the point is to prove
