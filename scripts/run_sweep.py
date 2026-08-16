@@ -13,9 +13,25 @@ run on a card the desktop shares. Three properties matter more than speed:
 Each config runs train -> predict_to_coco -> evaluate_detection, so every model is
 scored through the one shared evaluator.
 
+STOPPING AND RESUMING (you do not need to leave the machine on overnight):
+
+  Ctrl-C          Stops now. Both trainers checkpoint every epoch, so you lose at
+                  most the epoch in flight. Re-run this script to carry on - it
+                  resumes the partial config from last.pt with its optimizer and
+                  LR schedule intact, then continues down the list.
+  STOP file       `New-Item STOP` makes the sweep finish the CONFIG it is on and
+                  then exit cleanly. Delete the file before re-running.
+  --stop-after H  Refuses to START a config that cannot finish within H hours, so
+                  an evening session winds itself down.
+
+A config counts as trained only when its run directory holds a `.trained` marker.
+best.pt alone is not proof - both trainers write it mid-run, so treating it as
+"done" would silently score a half-trained model.
+
 Usage:
     python scripts/run_sweep.py --dry-run     # show the plan and exit
     python scripts/run_sweep.py               # run everything not yet scored
+    python scripts/run_sweep.py --stop-after 8
     python scripts/run_sweep.py --only fast_320 ssd_small_320
     python scripts/run_sweep.py --epochs 60   # trim the budget
 """
@@ -34,6 +50,9 @@ PYTHON = sys.executable
 RESULTS = ROOT / "results" / "detection.csv"
 PRED_DIR = ROOT / "results" / "predictions"
 SWEEP_LOG = ROOT / "results" / "sweep_log.csv"
+# Create this file to make the sweep stop after the config it is currently running,
+# rather than killing it mid-epoch.
+STOP_FILE = ROOT / "STOP"
 
 # (family, variant, imgsz, batch, estimated hours at 100 epochs)
 # Batches come from results/probe.csv - measured, not guessed. The yolo11s rungs at
@@ -60,10 +79,20 @@ def config_name(family: str, variant: str, imgsz: int) -> str:
     return f"{variant}_{imgsz}" if family == "yolo" else f"ssd_{variant}_{imgsz}"
 
 
-def weights_path(family: str, variant: str, imgsz: int) -> Path:
+def run_dir(family: str, variant: str, imgsz: int) -> Path:
     if family == "yolo":
-        return ROOT / "runs" / "detect" / f"{variant}_{imgsz}" / "weights" / "best.pt"
-    return ROOT / "runs" / "ssd" / f"ssd_{variant}_{imgsz}" / "best.pt"
+        return ROOT / "runs" / "detect" / f"{variant}_{imgsz}"
+    return ROOT / "runs" / "ssd" / f"ssd_{variant}_{imgsz}"
+
+
+def weights_path(family: str, variant: str, imgsz: int) -> Path:
+    base = run_dir(family, variant, imgsz)
+    return base / "weights" / "best.pt" if family == "yolo" else base / "best.pt"
+
+
+def last_path(family: str, variant: str, imgsz: int) -> Path:
+    base = run_dir(family, variant, imgsz)
+    return base / "weights" / "last.pt" if family == "yolo" else base / "last.pt"
 
 
 def already_scored() -> set[str]:
@@ -109,6 +138,10 @@ def parse_args() -> argparse.Namespace:
                         help="Run only these config names (see --dry-run).")
     parser.add_argument("--force", action="store_true",
                         help="Re-run configs that already have a results row.")
+    parser.add_argument("--stop-after", type=float, default=None, metavar="HOURS",
+                        help="Do not START a config whose estimate would run past this "
+                             "many hours. Lets the sweep wind down on its own before "
+                             "you shut the machine down for the night.")
     return parser.parse_args()
 
 
@@ -133,10 +166,25 @@ def main() -> None:
     budget = sum(p[4] for p in pending) * args.epochs / 100
     print(f"\n{len(pending)} config(s) to run, ~{budget:.1f} GPU-hours at "
           f"{args.epochs} epochs (before early stopping)\n")
-    print(f"{'config':<18}{'family':>8}{'imgsz':>7}{'batch':>7}{'est h':>8}")
+    header = f"{'config':<18}{'family':>8}{'imgsz':>7}{'batch':>7}{'est h':>8}"
+    if args.stop_after is not None:
+        header += f"{'cumul':>8}  within budget"
+    print(header)
+
+    cumulative = 0.0
     for family, variant, imgsz, batch, hours, name in pending:
-        print(f"{name:<18}{family:>8}{imgsz:>7}{batch:>7}"
-              f"{hours * args.epochs / 100:>8.1f}")
+        estimate = hours * args.epochs / 100
+        line = (f"{name:<18}{family:>8}{imgsz:>7}{batch:>7}{estimate:>8.1f}")
+        if args.stop_after is not None:
+            fits = cumulative + estimate <= args.stop_after
+            line += f"{cumulative + estimate:>8.1f}  {'yes' if fits else 'no'}"
+            if fits:
+                cumulative += estimate
+        print(line)
+
+    if args.stop_after is not None:
+        print(f"\n~{cumulative:.1f} h of the {args.stop_after:.1f} h budget would run "
+              f"before the sweep stops on its own.")
 
     if args.dry_run:
         print("\n--dry-run: nothing executed.")
@@ -146,15 +194,35 @@ def main() -> None:
     started_all = time.perf_counter()
     done, failed = [], []
 
-    for index, (family, variant, imgsz, batch, _, name) in enumerate(pending, start=1):
+    for index, (family, variant, imgsz, batch, hours, name) in enumerate(pending, start=1):
+        if STOP_FILE.is_file():
+            print(f"\n{STOP_FILE.name} found - stopping cleanly before {name}.")
+            print(f"Delete it and re-run this script to carry on.")
+            break
+
+        spent = (time.perf_counter() - started_all) / 3600
+        estimate = hours * args.epochs / 100
+        if args.stop_after is not None and spent + estimate > args.stop_after:
+            print(f"\n[{index}/{len(pending)}] {name} needs ~{estimate:.1f} h and "
+                  f"{spent:.1f} h of the {args.stop_after:.1f} h budget is gone.")
+            print("Stopping here rather than starting a run that cannot finish.")
+            break
+
         print(f"\n{'=' * 70}")
-        print(f"[{index}/{len(pending)}] {name}")
+        print(f"[{index}/{len(pending)}] {name}   (~{estimate:.1f} h, "
+              f"{spent:.1f} h elapsed)")
         print("=" * 70, flush=True)
 
         weights = weights_path(family, variant, imgsz)
-        if weights.is_file():
-            print(f"    [train] weights already exist, skipping training")
+        finished = (run_dir(family, variant, imgsz) / ".trained").is_file()
+        if finished:
+            print("    [train] already finished (.trained marker), skipping")
         else:
+            # best.pt existing is NOT proof of completion - both trainers write it
+            # mid-run. Only the .trained marker is, and last.pt means resume.
+            resuming = last_path(family, variant, imgsz).is_file()
+            if resuming:
+                print("    [train] partial run found, resuming from last.pt")
             if family == "yolo":
                 command = [PYTHON, "scripts/train_yolo.py", "--model", variant,
                            "--imgsz", str(imgsz), "--batch", str(batch),
@@ -163,6 +231,8 @@ def main() -> None:
                 command = [PYTHON, "scripts/train_ssd.py", "--backbone", variant,
                            "--imgsz", str(imgsz), "--batch", str(batch),
                            "--epochs", str(args.epochs)]
+            if resuming:
+                command.append("--resume")
             ok, seconds = run("train", command)
             log_outcome(name, "train", "ok" if ok else "failed", seconds, str(weights))
             if not ok:

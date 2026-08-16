@@ -234,6 +234,9 @@ def parse_args() -> argparse.Namespace:
                         help="Sanity check: train on the first N images only. Loss "
                              "should collapse towards zero, proving targets are wired "
                              "correctly, before committing to a multi-hour run.")
+    parser.add_argument("--resume", action="store_true",
+                        help="Continue from last.pt, restoring optimizer, scaler and "
+                             "LR schedule. Losing at most the epoch in flight.")
     parser.add_argument("--probe", action="store_true",
                         help="One epoch on full data; report wall time and peak VRAM.")
     return parser.parse_args()
@@ -323,19 +326,55 @@ def main() -> None:
     started = time.perf_counter()
     step = 0
     best_map, best_epoch = -1.0, -1
+    start_epoch = 0
 
-    def save(path: Path, epoch: int, score: float) -> None:
-        torch.save(
-            {
-                "model": model.state_dict(), "backbone": args.backbone,
-                "imgsz": args.imgsz, "num_classes": num_classes,
-                "epoch": epoch, "val_map": score, "seed": args.seed,
-            },
-            path,
-        )
+    def save(path: Path, epoch: int, score: float, full: bool = False) -> None:
+        """best.pt stays lean for inference; last.pt carries the state a resume needs."""
+        payload = {
+            "model": model.state_dict(), "backbone": args.backbone,
+            "imgsz": args.imgsz, "num_classes": num_classes,
+            "epoch": epoch, "val_map": score, "seed": args.seed,
+        }
+        if full:
+            payload |= {
+                "optimizer": optimizer.state_dict(),
+                "scaler": scaler.state_dict(),
+                "scheduler": scheduler.state_dict(),
+                "best_map": best_map, "best_epoch": best_epoch, "step": step,
+            }
+        # Write to a temp file first: interrupting mid-write would otherwise leave a
+        # truncated checkpoint, which is exactly the file a resume depends on.
+        tmp = path.with_suffix(".tmp")
+        torch.save(payload, tmp)
+        tmp.replace(path)
+
+    last_path = out_dir / "last.pt"
+    if args.resume:
+        if not last_path.is_file():
+            print(f"--resume given but {last_path} does not exist; starting fresh.\n")
+        else:
+            state = torch.load(last_path, map_location=device, weights_only=False)
+            if state["backbone"] != args.backbone or state["imgsz"] != args.imgsz:
+                sys.exit(
+                    f"{last_path} is a {state['backbone']}@{state['imgsz']} checkpoint, "
+                    f"but this run is {args.backbone}@{args.imgsz}."
+                )
+            model.load_state_dict(state["model"])
+            optimizer.load_state_dict(state["optimizer"])
+            scaler.load_state_dict(state["scaler"])
+            scheduler.load_state_dict(state["scheduler"])
+            start_epoch = state["epoch"]
+            step = state.get("step", start_epoch * steps_per_epoch)
+            best_map = state.get("best_map", -1.0)
+            best_epoch = state.get("best_epoch", -1)
+            print(f"Resumed from epoch {start_epoch} "
+                  f"(best val mAP {best_map:.4f} at epoch {best_epoch})\n")
+            if start_epoch >= epochs:
+                print("Already at the requested epoch count - nothing to do.")
+                return
 
     try:
-        for epoch in range(epochs):
+        for epoch in range(start_epoch, epochs):
             model.train()
             running, seen = 0.0, 0
             for images, targets in loader:
@@ -377,9 +416,10 @@ def main() -> None:
             if args.probe or args.overfit:
                 continue
 
-            # last.pt every epoch: a multi-hour run must not lose everything to a
-            # crash at hour five.
-            save(out_dir / "last.pt", epoch + 1, best_map)
+            # last.pt every epoch, with full optimizer state: a multi-hour run must
+            # survive a crash - or a deliberate overnight shutdown - losing at most
+            # the epoch in flight.
+            save(last_path, epoch + 1, best_map, full=True)
 
             due = (epoch + 1) % args.eval_every == 0 or epoch + 1 == epochs
             if due:
@@ -395,6 +435,14 @@ def main() -> None:
                     print(f"\nEarly stop: no val mAP improvement in {args.patience} "
                           f"epochs (best {best_map:.4f} at epoch {best_epoch}).")
                     break
+    except KeyboardInterrupt:
+        print(
+            f"\n\nInterrupted - last.pt holds everything through epoch {epoch}. "
+            f"Resume with:\n"
+            f"  python scripts/train_ssd.py --backbone {args.backbone} "
+            f"--imgsz {args.imgsz} --batch {args.batch} --epochs {epochs} --resume"
+        )
+        sys.exit(130)
     except torch.cuda.OutOfMemoryError:
         peak = torch.cuda.max_memory_reserved(0) / 1024**3
         print(f"\nCUDA OUT OF MEMORY at batch={args.batch}, imgsz={args.imgsz} "
@@ -431,6 +479,9 @@ def main() -> None:
     checkpoint = out_dir / "best.pt"
     if not checkpoint.is_file():  # never evaluated (e.g. epochs < eval_every)
         save(checkpoint, epochs, best_map)
+    # Only written on a clean finish. run_sweep.py treats its absence as "training is
+    # unfinished, resume it" - best.pt alone is not proof, since it appears mid-run.
+    (out_dir / ".trained").write_text("", encoding="utf-8")
     print(f"\ncheckpoint: {checkpoint}   best val mAP {best_map:.4f} "
           f"at epoch {best_epoch}")
     print(f"peak VRAM : {peak:.2f} GiB    wall time: {elapsed / 3600:.2f} h")

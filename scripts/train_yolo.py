@@ -77,6 +77,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--probe", action="store_true",
                         help="Train ONE epoch on the full data and report wall time "
                              "and peak VRAM, to size --batch for this rung.")
+    parser.add_argument("--resume", action="store_true",
+                        help="Continue an interrupted run from its last.pt, which "
+                             "Ultralytics writes every epoch.")
     return parser.parse_args()
 
 
@@ -136,25 +139,43 @@ def main() -> None:
     torch.cuda.reset_peak_memory_stats(0)
     started = time.perf_counter()
 
-    model = YOLO(PRESETS[args.model])
+    run_dir = ROOT / "runs" / ("probe" if args.probe else "detect") / name
+    last = run_dir / "weights" / "last.pt"
+
+    # Ultralytics writes last.pt every epoch and stores the full training state in it,
+    # so resume picks up the optimizer and epoch counter, not just the weights.
+    resuming = args.resume and last.is_file()
+    if args.resume and not resuming:
+        print(f"--resume given but {last} does not exist; starting fresh.\n")
+
+    model = YOLO(str(last) if resuming else PRESETS[args.model])
     try:
-        model.train(
-            data=str(DATA_YAML),
-            epochs=epochs,
-            batch=args.batch,
-            imgsz=args.imgsz,
-            workers=args.workers,
-            fraction=fraction,
-            patience=args.patience,
-            device=0,                 # never CPU - see module docstring
-            amp=not args.no_amp,
-            seed=args.seed,
-            deterministic=True,       # reproducibility matters more than the last few %
-            project=str(ROOT / "runs" / ("probe" if args.probe else "detect")),
-            name=name,
-            # A probe is meant to be re-run while tuning batch; a real run is not.
-            exist_ok=args.probe,
-        )
+        if resuming:
+            print(f"Resuming from {last}\n")
+            model.train(resume=True)
+        else:
+            model.train(
+                data=str(DATA_YAML),
+                epochs=epochs,
+                batch=args.batch,
+                imgsz=args.imgsz,
+                workers=args.workers,
+                fraction=fraction,
+                patience=args.patience,
+                device=0,             # never CPU - see module docstring
+                amp=not args.no_amp,
+                seed=args.seed,
+                deterministic=True,   # reproducibility matters more than the last few %
+                project=str(run_dir.parent),
+                name=name,
+                # A probe is meant to be re-run while tuning batch; a real run is not.
+                exist_ok=args.probe,
+            )
+    except KeyboardInterrupt:
+        print(f"\n\nInterrupted - Ultralytics saved {last} at the last epoch boundary."
+              f"\nResume with:\n  python scripts/train_yolo.py --model {args.model} "
+              f"--imgsz {args.imgsz} --batch {args.batch} --resume")
+        sys.exit(130)
     except Exception as exc:  # noqa: BLE001 - need the raw CUDA message
         oom = isinstance(exc, torch.cuda.OutOfMemoryError) or "out of memory" in str(exc)
         if not oom:
@@ -186,7 +207,10 @@ def main() -> None:
         })
         return
 
-    out = ROOT / "runs" / "detect" / name / "weights" / "best.pt"
+    out = run_dir / "weights" / "best.pt"
+    # Only written on a clean finish. run_sweep.py treats its absence as "unfinished,
+    # resume it" - best.pt alone is not proof, since Ultralytics writes it mid-run.
+    (run_dir / ".trained").write_text("", encoding="utf-8")
     print(f"\nbest weights: {out}")
     print(f"peak VRAM   : {peak:.2f} GiB    wall time: {elapsed / 3600:.2f} h")
 
