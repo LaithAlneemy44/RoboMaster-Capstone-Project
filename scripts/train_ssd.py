@@ -296,11 +296,19 @@ def main() -> None:
     torch.manual_seed(args.seed)
     device = torch.device("cuda:0")
     epochs = 1 if args.probe else args.epochs
-    name = args.name or (
-        f"probe_{args.backbone}_{args.imgsz}_b{args.batch}"
-        if args.probe else f"ssd_{args.backbone}_{args.imgsz}"
-    )
-    out_dir = ROOT / "runs" / ("probe" if args.probe else "ssd") / name
+    # Probe and overfit runs are throwaway diagnostics, so they are kept out of
+    # runs/ssd/ entirely. Otherwise they would land on the directory name a real
+    # sweep run uses, and any checkpoint they left would look like a partial run
+    # for run_sweep.py to resume - training a real config onward from 100 images.
+    if args.probe:
+        default_name = f"probe_{args.backbone}_{args.imgsz}_b{args.batch}"
+    elif args.overfit:
+        default_name = f"overfit_{args.backbone}_{args.imgsz}"
+    else:
+        default_name = f"ssd_{args.backbone}_{args.imgsz}"
+    name = args.name or default_name
+    throwaway = args.probe or args.overfit
+    out_dir = ROOT / "runs" / ("probe" if throwaway else "ssd") / name
     out_dir.mkdir(parents=True, exist_ok=True)
 
     train_set = RocoCoco(train_json, train=True, imgsz=args.imgsz)
