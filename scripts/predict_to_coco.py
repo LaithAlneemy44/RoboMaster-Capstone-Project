@@ -38,6 +38,17 @@ COCO_ROOT = ROOT / "Datasets" / "DJI ROCO Central.v1i.coco"
 DEFAULT_CONF = 0.001
 
 
+def normalise_device(device: str) -> str:
+    """Turn Ultralytics' device spelling into one torch also accepts.
+
+    Ultralytics takes "0" to mean the first GPU, but torch.device("0") raises
+    "Invalid device string". Both understand "cuda:0", so everything is normalised to
+    that and each backend gets a string it can parse.
+    """
+    device = device.strip()
+    return f"cuda:{device}" if device.isdigit() else device
+
+
 def load_targets(gt_path: Path) -> tuple[list[tuple[int, Path]], dict[str, int]]:
     """Return [(image_id, absolute path)] and a class-name -> category_id map."""
     gt = json.loads(gt_path.read_text(encoding="utf-8"))
@@ -190,15 +201,17 @@ def main() -> None:
         sys.exit(f"Missing {args.gt}\nRun: python scripts/make_splits.py")
 
     targets, name_to_cat = load_targets(args.gt)
+    device = normalise_device(args.device)
     print(f"family : {args.family}")
     print(f"weights: {args.weights}")
     print(f"images : {len(targets)}   imgsz: {args.imgsz}   conf: {args.conf}")
+    print(f"device : {device}")
 
     predict = predict_yolo if args.family == "yolo" else predict_ssd
     start = time.perf_counter()
     detections = predict(
         args.weights, targets, name_to_cat, args.imgsz, args.conf,
-        args.device, args.batch,
+        device, args.batch,
     )
     elapsed = time.perf_counter() - start
 
