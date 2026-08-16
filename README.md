@@ -23,6 +23,7 @@ A "perception model" here means one **detection** model paired with one **tracki
 | `scripts/check_gpu.py` | Proves the GPU can actually launch a kernel (not just `is_available()`) |
 | `scripts/make_splits.py` | Builds train/val lists for both formats without touching `Datasets/` |
 | `scripts/train_yolo.py` | Fine-tunes YOLO from COCO-pretrained weights, GPU-only |
+| `scripts/train_ssd.py` | Fine-tunes MobileNet-SSD (SSDLite) at any ladder rung, GPU-only |
 | `scripts/predict_to_coco.py` | Runs a trained model over val, writes COCO detections |
 | `scripts/evaluate_detection.py` | **The single evaluator** — scores every model family |
 | `data/manifest.sha256` | SHA-256 of all 7973 dataset files (provenance + integrity) |
@@ -202,6 +203,49 @@ python scripts/make_splits.py --from-assignment
 Run that after cloning, after moving the project, or on Colab. It replays the recorded
 assignment exactly rather than re-deriving it, so it does not depend on RNG
 reproducibility or on the flags originally used.
+
+## Training the detection models
+
+Resolution is an **experimental axis**, not a constant. Armor is 66% of all instances
+at a median **22 px in a 1920×1080 frame**, so it shrinks to ~3.6 px at 320 and ~11 px
+at 960 — input size is expected to dominate accuracy, and it trades directly against
+the CPU latency this project exists to measure. Every model runs the same
+**320 / 640 / 960** ladder, giving 12 configs:
+
+| Family | Variants | Ladder | Runs |
+|---|---|---|---|
+| YOLO | `fast` = yolo11n, `yolo` = yolo11s | 320 / 640 / 960 | 6 |
+| MobileNet-SSD | `large` / `small` MobileNetV3 | 320 / 640 / 960 | 6 |
+
+**Probe before you commit to a run.** Usable VRAM is ~5.08 GiB because the desktop
+drives the same card, which leaves little margin at 960. `--probe` trains one epoch on
+the full data and reports wall time and peak VRAM, appending to `results/probe.csv`:
+
+```bash
+python scripts/train_yolo.py --probe --model yolo --imgsz 960 --batch 8
+python scripts/train_ssd.py  --probe --backbone large --imgsz 960 --batch 8
+```
+
+On CUDA OOM, lower `--batch`. **Never lower `--imgsz` to escape OOM** — it is the
+variable under study, and changing it silently puts two models on different rungs.
+
+### Why MobileNet-SSD is assembled by hand
+
+`torchvision.models.detection.ssdlite320_mobilenet_v3_large` hard-codes 320 and
+rejects `size=` (`TypeError: SSD.__init__() got multiple values for argument 'size'`),
+so it cannot span the ladder. `train_ssd.py` assembles the same parts —
+`_mobilenet_extractor`, `DefaultBoxGenerator`, `SSDLiteHead`, `SSD` — at the requested
+size.
+
+The width axis is **large vs small**, not `width_mult`. torchvision has no pretrained
+MobileNetV3 below `width_mult=1.0`: `0.75` and `0.5` build (1.55M / 0.98M params) but
+fail to load ImageNet weights with a size mismatch, so they would train from scratch
+on 2258 images and lose for reasons unrelated to width. Both `large` and `small` start
+from ImageNet weights, so the capacity comparison is fair.
+
+At 320 the deepest pyramid level is 1×1, so a batch of one trips BatchNorm with
+*"Expected more than 1 value per channel"*. The loader therefore uses `drop_last=True`,
+and the channel-shape probe runs in eval mode.
 
 ## Evaluation — one evaluator for every model
 
