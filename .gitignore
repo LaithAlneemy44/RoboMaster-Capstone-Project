@@ -226,6 +226,19 @@ __marimo__/
 # against data/manifest.sha256. See README.md ("Dataset") for the reasoning.
 Datasets/
 
+# Generated split artifacts. make_splits.py writes these with ABSOLUTE paths, so
+# they are machine-local: they broke once already when the project moved C: -> E:,
+# and they cannot work on Colab. The COCO JSONs are portable but are 8 MB of
+# non-diffable generated JSON.
+#
+# data/splits/assignment.csv IS committed and is deliberately the exception. It is
+# 200 KB of diffable text that fully determines the split, and every file below
+# regenerates from it byte-for-byte with:
+#     python scripts/make_splits.py --from-assignment
+data/roco_central.yaml
+data/splits/*.txt
+data/splits/coco_*.json
+
 # Training artifacts. These are byte-distinct on every run, so git stores a full
 # copy each time and the repo grows without bound. Nothing here is reproducible
 # from history anyway - rerun the training script instead.

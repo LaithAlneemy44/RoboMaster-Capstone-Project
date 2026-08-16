@@ -60,6 +60,18 @@ Two machine roles that must not be conflated:
 - Do NOT mix in the North/South ROCO variants — it changes class balance and breaks the
   2655-image framing in the proposal.
 - Split: 85/15 train/val for detection (no test set needed — combined models are what's tested).
+- **SETTLED — the split is group-aware by match clip.** The 2655 images are frames from only
+  SEVEN match recordings, so a random split puts consecutive frames of the same moment in
+  both train and val and inflates val mAP. Default holds out the whole
+  `-VsBorn-of-Fire_BO2_1` clip: 2258/397 = 85.05/14.95, which hits the proposal's 85/15
+  with zero leakage. Applies to EVERY detection model. `make_splits.py` prints a per-clip
+  leakage verdict every run; `--val-frac`/`--keep-export-split` are leaky and labelled so.
+  Limitation to state in the write-up: val is one match, so clip-level n=1 — mAP confidence
+  intervals come from bootstrapping over val images and do NOT capture across-match variance.
+- Only `data/splits/assignment.csv` is committed. `data/roco_central.yaml`,
+  `data/splits/*.txt` and `data/splits/coco_*.json` hold absolute paths or are bulky
+  generated JSON, so they are gitignored — rebuild with
+  `python scripts/make_splits.py --from-assignment` after a clone or a move.
 
 ### Tracking (video) — biggest hidden cost
 - No labelled RoboMaster tracking dataset exists. Must be BUILT by hand from clips on the

@@ -23,6 +23,13 @@ ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "data" / "manifest.sha256"
 CHUNK = 1 << 20  # 1 MiB
 
+# Ultralytics writes labels.cache next to each label directory on the first pass
+# over a split, so any training run leaves derived files inside Datasets/. They
+# are regenerable scan caches, not export content, and Ultralytics invalidates
+# them itself when the file list changes - so they are not dataset corruption and
+# must not fail the check.
+DERIVED_SUFFIXES = {".cache"}
+
 
 def parse_manifest(path: Path) -> dict[str, str]:
     """Parse GNU sha256sum output into {relative_path: digest}."""
@@ -77,16 +84,24 @@ def main() -> None:
     # Files present on disk but absent from the manifest - usually a different
     # export version, or stray files that should not be trained on.
     tracked = {(ROOT / rel) for rel in expected}
+    found = (
+        [p for p in (ROOT / "Datasets").rglob("*") if p.is_file() and p not in tracked]
+        if (ROOT / "Datasets").exists()
+        else []
+    )
+    derived = [p for p in found if p.suffix.lower() in DERIVED_SUFFIXES]
     extra = [
         str(p.relative_to(ROOT)).replace("\\", "/")
-        for p in (ROOT / "Datasets").rglob("*")
-        if p.is_file() and p not in tracked
-    ] if (ROOT / "Datasets").exists() else []
+        for p in found
+        if p not in set(derived)
+    ]
 
     print(f"\nmanifest entries : {len(expected)}")
     print(f"missing          : {len(missing)}")
     print(f"altered          : {len(altered)}")
     print(f"unexpected extra : {len(extra)}")
+    if derived:
+        print(f"derived (ignored): {len(derived)}   e.g. {derived[0].name}")
 
     for label, items in (("MISSING", missing), ("ALTERED", altered), ("EXTRA", extra)):
         for item in items[:10]:
