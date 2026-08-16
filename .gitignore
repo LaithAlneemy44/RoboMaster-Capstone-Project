@@ -239,6 +239,11 @@ data/roco_central.yaml
 data/splits/*.txt
 data/splits/coco_*.json
 
+# Raw per-model detection dumps, ~5 MB each and one per config. They are a
+# regenerable intermediate between weights and scores (predict_to_coco.py), not a
+# result. The scores themselves - results/*.csv - ARE committed.
+results/predictions/
+
 # Training artifacts. These are byte-distinct on every run, so git stores a full
 # copy each time and the repo grows without bound. Nothing here is reproducible
 # from history anyway - rerun the training script instead.
