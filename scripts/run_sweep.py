@@ -54,25 +54,50 @@ SWEEP_LOG = ROOT / "results" / "sweep_log.csv"
 # rather than killing it mid-epoch.
 STOP_FILE = ROOT / "STOP"
 
-# (family, variant, imgsz, batch, estimated hours at 100 epochs)
-# Batches come from results/probe.csv - measured, not guessed. The yolo11s rungs at
-# 640 and 960 are held below their probed maximum because those peaked at 92-96% of
-# available VRAM, and the desktop drives the same card; Ultralytics accumulates to a
-# nominal batch of 64, so a smaller batch barely perturbs the optimisation.
+# The 12 configs. Batch size and time estimate are NOT hardcoded here - they are read
+# from results/probe.csv, so the sweep always runs on measurements rather than on
+# numbers hand-copied out of a probe run and left to drift.
 CONFIGS = [
-    ("yolo", "fast", 320, 32, 1.66),
-    ("yolo", "yolo", 320, 32, 2.28),
-    ("ssd", "small", 320, 32, 1.50),
-    ("ssd", "large", 320, 32, 1.60),
-    ("ssd", "small", 640, 16, 2.50),
-    ("ssd", "large", 640, 16, 2.94),
-    ("yolo", "fast", 640, 16, 3.21),
-    ("ssd", "small", 960, 8, 4.50),
-    ("yolo", "fast", 960, 8, 4.93),
-    ("yolo", "yolo", 640, 12, 4.50),
-    ("ssd", "large", 960, 8, 5.53),
-    ("yolo", "yolo", 960, 6, 8.59),
+    ("yolo", "fast", 320), ("yolo", "fast", 640), ("yolo", "fast", 960),
+    ("yolo", "yolo", 320), ("yolo", "yolo", 640), ("yolo", "yolo", 960),
+    ("ssd", "large", 320), ("ssd", "large", 640), ("ssd", "large", 960),
+    ("ssd", "small", 320), ("ssd", "small", 640), ("ssd", "small", 960),
 ]
+
+PROBE_RESULTS = ROOT / "results" / "probe.csv"
+
+# Largest probed peak VRAM this will accept, of the ~5.08 GiB free. The desktop drives
+# the same card, so a config that peaked at 4.86 GiB survived its one probe epoch but
+# has no margin at all across a multi-hour run. Where a rung was probed at several
+# batch sizes, the biggest one under this ceiling wins.
+VRAM_CEILING_GIB = 4.3
+
+
+def probe_key(family: str, variant: str) -> str:
+    return variant if family == "yolo" else f"ssd_{variant}"
+
+
+def load_probes() -> dict[tuple[str, int], tuple[int, float, float]]:
+    """(probe model, imgsz) -> (batch, est hours, peak VRAM), best batch under ceiling."""
+    if not PROBE_RESULTS.is_file():
+        sys.exit(
+            f"No {PROBE_RESULTS.relative_to(ROOT)}.\n"
+            "Probe first, so batch sizes come from measurement:\n"
+            "  python scripts/train_yolo.py --probe --model yolo --imgsz 640 --batch 16"
+        )
+    best: dict[tuple[str, int], tuple[int, float, float]] = {}
+    with PROBE_RESULTS.open(newline="", encoding="utf-8") as fh:
+        for row in csv.DictReader(fh):
+            if row["status"] != "ok":
+                continue
+            peak = float(row["peak_vram_gib"])
+            if peak > VRAM_CEILING_GIB:
+                continue
+            key = (row["model"], int(row["imgsz"]))
+            batch = int(row["batch"])
+            if key not in best or batch > best[key][0]:
+                best[key] = (batch, float(row["est_100ep_hours"]), peak)
+    return best
 
 
 def config_name(family: str, variant: str, imgsz: int) -> str:
@@ -153,16 +178,29 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     scored = set() if args.force else already_scored()
+    probes = load_probes()
 
-    pending = []
-    for family, variant, imgsz, batch, hours in CONFIGS:
+    pending, unprobed = [], []
+    for family, variant, imgsz in CONFIGS:
         name = config_name(family, variant, imgsz)
         if args.only and name not in args.only:
             continue
         if name in scored:
             print(f"[skip] {name:<18} already in results/detection.csv")
             continue
-        pending.append((family, variant, imgsz, batch, hours, name))
+        probe = probes.get((probe_key(family, variant), imgsz))
+        if probe is None:
+            unprobed.append(name)
+            continue
+        batch, hours, peak = probe
+        pending.append((family, variant, imgsz, batch, hours, name, peak))
+
+    if unprobed:
+        print(f"\nNo probe under {VRAM_CEILING_GIB} GiB for: {', '.join(unprobed)}")
+        print("Probe them (or at a smaller --batch) before they can be swept.")
+
+    # Cheapest first, so real results land within hours rather than at the very end.
+    pending.sort(key=lambda p: p[4])
 
     if not pending:
         print("\nNothing to do - every requested config is already scored.")
@@ -171,15 +209,15 @@ def main() -> None:
     budget = sum(p[4] for p in pending) * args.epochs / 100
     print(f"\n{len(pending)} config(s) to run, ~{budget:.1f} GPU-hours at "
           f"{args.epochs} epochs (before early stopping)\n")
-    header = f"{'config':<18}{'family':>8}{'imgsz':>7}{'batch':>7}{'est h':>8}"
+    header = f"{'config':<18}{'family':>8}{'imgsz':>7}{'batch':>7}{'VRAM':>7}{'est h':>8}"
     if args.stop_after is not None:
         header += f"{'cumul':>8}  within budget"
     print(header)
 
     cumulative = 0.0
-    for family, variant, imgsz, batch, hours, name in pending:
+    for family, variant, imgsz, batch, hours, name, peak in pending:
         estimate = hours * args.epochs / 100
-        line = (f"{name:<18}{family:>8}{imgsz:>7}{batch:>7}{estimate:>8.1f}")
+        line = (f"{name:<18}{family:>8}{imgsz:>7}{batch:>7}{peak:>7.1f}{estimate:>8.1f}")
         if args.stop_after is not None:
             fits = cumulative + estimate <= args.stop_after
             line += f"{cumulative + estimate:>8.1f}  {'yes' if fits else 'no'}"
@@ -215,7 +253,7 @@ def main() -> None:
 
 
 def sweep(args, pending, started_all, done, failed) -> None:
-    for index, (family, variant, imgsz, batch, hours, name) in enumerate(pending, start=1):
+    for index, (family, variant, imgsz, batch, hours, name, _) in enumerate(pending, start=1):
         if STOP_FILE.is_file():
             print(f"\n{STOP_FILE.name} found - stopping cleanly before {name}.")
             print(f"Delete it and re-run this script to carry on.")
