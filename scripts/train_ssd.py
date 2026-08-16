@@ -161,6 +161,55 @@ def collate(batch):
     return tuple(zip(*batch))
 
 
+def evaluate_map(model, val_set, device, val_json: Path, batch: int) -> float:
+    """val mAP@[.5:.95] under the project's ignore policy, for checkpoint selection.
+
+    Uses the same policy helper as scripts/evaluate_detection.py so the number that
+    picks best.pt is on the same scale as the number finally reported. The headline
+    figure still comes from the shared evaluator, not from here.
+    """
+    import torch
+    from pycocotools.coco import COCO
+    from pycocotools.cocoeval import COCOeval
+
+    from evaluate_detection import apply_ignore_policy
+
+    model.eval()
+    detections = []
+    with torch.inference_mode():
+        for start in range(0, len(val_set), batch):
+            chunk = [val_set[i] for i in range(start, min(start + batch, len(val_set)))]
+            images = [img.to(device) for img, _ in chunk]
+            for offset, output in enumerate(model(images)):
+                image_id = val_set.images[start + offset]["id"]
+                for box, label, score in zip(
+                    output["boxes"].cpu(), output["labels"].cpu(), output["scores"].cpu()
+                ):
+                    x1, y1, x2, y2 = (float(v) for v in box)
+                    detections.append({
+                        "image_id": image_id, "category_id": int(label),
+                        "bbox": [x1, y1, x2 - x1, y2 - y1], "score": float(score),
+                    })
+    model.train()
+
+    if not detections:
+        return 0.0
+
+    gt_raw = json.loads(val_json.read_text(encoding="utf-8"))
+    scored_gt, kept, _ = apply_ignore_policy(gt_raw, detections, 0.5)
+    if not kept:
+        return 0.0
+
+    coco_gt = COCO()
+    coco_gt.dataset = scored_gt
+    coco_gt.createIndex()
+    coco_eval = COCOeval(coco_gt, coco_gt.loadRes(kept), "bbox")
+    coco_eval.evaluate()
+    coco_eval.accumulate()
+    coco_eval.summarize()
+    return float(coco_eval.stats[0])
+
+
 # --------------------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
@@ -177,6 +226,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--name", default=None)
     parser.add_argument("--no-amp", action="store_true")
+    parser.add_argument("--eval-every", type=int, default=5,
+                        help="Compute val mAP every N epochs to select best.pt.")
+    parser.add_argument("--patience", type=int, default=30,
+                        help="Stop if val mAP has not improved in this many epochs.")
+    parser.add_argument("--overfit", type=int, default=0, metavar="N",
+                        help="Sanity check: train on the first N images only. Loss "
+                             "should collapse towards zero, proving targets are wired "
+                             "correctly, before committing to a multi-hour run.")
     parser.add_argument("--probe", action="store_true",
                         help="One epoch on full data; report wall time and peak VRAM.")
     return parser.parse_args()
@@ -216,6 +273,12 @@ def main() -> None:
     train_set = RocoCoco(train_json, train=True)
     val_set = RocoCoco(val_json, train=False)
     num_classes = train_set.num_classes
+    if args.overfit:
+        # Deliberately keeps the SAME images for train and val: the point is to prove
+        # the target plumbing can drive loss down, not to measure generalization.
+        train_set.images = train_set.images[: args.overfit]
+        print(f"OVERFIT SANITY CHECK on {len(train_set.images)} images - "
+              f"loss must collapse; this is not a result.\n")
 
     print(f"backbone : mobilenet_v3_{args.backbone}")
     print(f"imgsz    : {args.imgsz}   batch: {args.batch}   epochs: {epochs}")
@@ -259,6 +322,17 @@ def main() -> None:
     torch.cuda.reset_peak_memory_stats(0)
     started = time.perf_counter()
     step = 0
+    best_map, best_epoch = -1.0, -1
+
+    def save(path: Path, epoch: int, score: float) -> None:
+        torch.save(
+            {
+                "model": model.state_dict(), "backbone": args.backbone,
+                "imgsz": args.imgsz, "num_classes": num_classes,
+                "epoch": epoch, "val_map": score, "seed": args.seed,
+            },
+            path,
+        )
 
     try:
         for epoch in range(epochs):
@@ -299,6 +373,28 @@ def main() -> None:
                         end="",
                     )
             print()
+
+            if args.probe or args.overfit:
+                continue
+
+            # last.pt every epoch: a multi-hour run must not lose everything to a
+            # crash at hour five.
+            save(out_dir / "last.pt", epoch + 1, best_map)
+
+            due = (epoch + 1) % args.eval_every == 0 or epoch + 1 == epochs
+            if due:
+                score = evaluate_map(model, val_set, device, val_json, args.batch)
+                marker = ""
+                if score > best_map:
+                    best_map, best_epoch = score, epoch + 1
+                    save(out_dir / "best.pt", epoch + 1, score)
+                    marker = "  <- best"
+                print(f"  epoch {epoch + 1}: val mAP {score:.4f}{marker}", flush=True)
+
+                if epoch + 1 - best_epoch >= args.patience:
+                    print(f"\nEarly stop: no val mAP improvement in {args.patience} "
+                          f"epochs (best {best_map:.4f} at epoch {best_epoch}).")
+                    break
     except torch.cuda.OutOfMemoryError:
         peak = torch.cuda.max_memory_reserved(0) / 1024**3
         print(f"\nCUDA OUT OF MEMORY at batch={args.batch}, imgsz={args.imgsz} "
@@ -327,19 +423,16 @@ def main() -> None:
         })
         return
 
+    if args.overfit:
+        print(f"\nOverfit check finished in {elapsed / 60:.1f} min. The final loss "
+              f"above should be far below the ~30 it started at.")
+        return
+
     checkpoint = out_dir / "best.pt"
-    torch.save(
-        {
-            "model": model.state_dict(),
-            "backbone": args.backbone,
-            "imgsz": args.imgsz,
-            "num_classes": num_classes,
-            "epochs": epochs,
-            "seed": args.seed,
-        },
-        checkpoint,
-    )
-    print(f"\ncheckpoint: {checkpoint}")
+    if not checkpoint.is_file():  # never evaluated (e.g. epochs < eval_every)
+        save(checkpoint, epochs, best_map)
+    print(f"\ncheckpoint: {checkpoint}   best val mAP {best_map:.4f} "
+          f"at epoch {best_epoch}")
     print(f"peak VRAM : {peak:.2f} GiB    wall time: {elapsed / 3600:.2f} h")
     print("\nScore it through the shared evaluator:")
     print(f"  python scripts/predict_to_coco.py --family ssd --weights {checkpoint} "
