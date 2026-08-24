@@ -5,9 +5,20 @@
 
 matplotlib==3.11.1
 numpy==2.5.2
-opencv-python==5.0.0.93
+# 4.x, NOT 5.x, and this is load-bearing. OpenCV 5.0 removed TrackerGOTURN,
+# TrackerCSRT, TrackerKCF and cv2.legacy; only MIL/Nano/Vit survive there. GOTURN is
+# named in the research proposal, so the tracking work needs the 4.x line. This is not
+# a stale pin - 4.14.0.94 was published 2026-07-28, AFTER 5.0.0.93 (2026-07-02); both
+# lines are maintained in parallel. Ultralytics asks for opencv-python>=4.7.0, so 4.14
+# is inside its supported range. Do not bump to 5.x without replacing GOTURN.
+opencv-python==4.14.0.94
 psutil==7.2.2
 pycocotools==2.0.11
 PyYAML==6.0.3
 requests==2.34.2
 ultralytics==8.4.120
+
+# Tracking phase.
+motmetrics==1.4.0     # MOTA / IDF1 / ID switches - the proposal's tracking metrics
+scipy==1.18.1         # Hungarian assignment for SORT-style association
+yt-dlp==2026.8.19     # ARC clip acquisition; raw video stays local, never committed

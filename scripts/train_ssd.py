@@ -252,6 +252,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch", type=int, default=16, help="Lower first on CUDA OOM.")
     parser.add_argument("--lr", type=float, default=0.01)
     parser.add_argument("--weight-decay", type=float, default=4e-5)
+    # Default 0 = OFF (one optimiser step per batch). 64 mirrors Ultralytics and was
+    # TESTED: it makes every config WORSE, in proportion to the accumulation factor
+    # (2x -0.011, 4x -0.057, 8x -0.057 mAP). SSD here is optimiser-step limited at 100
+    # epochs, so dividing the number of weight updates costs more than equalising the
+    # effective batch gains. See results/detection_accum64.csv. It also did NOT fix the
+    # ssd_*_960 collapse, which rules out the LR-to-batch confound as that cause.
+    parser.add_argument("--nbs", type=int, default=0,
+                        help="Nominal (effective) batch size to accumulate to. "
+                             "Matches Ultralytics' nbs so both families train at "
+                             "the same effective batch across the imgsz ladder.")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--name", default=None)
@@ -343,12 +353,26 @@ def main() -> None:
         drop_last=True, persistent_workers=args.workers > 0,
     )
 
+    # Gradient accumulation to a fixed effective batch, mirroring what Ultralytics does
+    # for the YOLO side (nbs=64, accumulate=round(nbs/batch), weight_decay scaled to
+    # match). Without it this comparison is confounded: VRAM forces batch 32/16/8 as
+    # resolution rises, so a fixed --lr means the LR-to-batch ratio changes by 4x along
+    # the resolution ladder. That is almost certainly why ssd_*_960 scored WORSE than
+    # ssd_*_320 while YOLO improved monotonically over the identical ladder - YOLO was
+    # protected by accumulation and SSD was not. Resolution has to be the only variable.
+    accumulate = max(1, round(args.nbs / args.batch)) if args.nbs else 1
+    effective_batch = args.batch * accumulate
+    weight_decay = args.weight_decay * effective_batch / args.nbs
+
     optimizer = torch.optim.SGD(
         [p for p in model.parameters() if p.requires_grad],
-        lr=args.lr, momentum=0.9, weight_decay=args.weight_decay, nesterov=True,
+        lr=args.lr, momentum=0.9, weight_decay=weight_decay, nesterov=True,
     )
     scaler = torch.amp.GradScaler("cuda", enabled=not args.no_amp)
-    steps_per_epoch = max(1, len(loader))
+    micro_per_epoch = max(1, len(loader))
+    # The schedule advances per OPTIMISER step, not per micro-batch, or it would run
+    # `accumulate` times too fast and finish the cosine decay early.
+    steps_per_epoch = max(1, micro_per_epoch // accumulate)
     warmup_steps = min(500, steps_per_epoch)
     total_steps = epochs * steps_per_epoch
 
@@ -362,7 +386,8 @@ def main() -> None:
 
     torch.cuda.reset_peak_memory_stats(0)
     started = time.perf_counter()
-    step = 0
+    step = 0      # optimiser steps
+    micro = 0     # forward/backward passes; accumulate of these per step
     best_map, best_epoch = -1.0, -1
     start_epoch = 0
 
@@ -434,14 +459,19 @@ def main() -> None:
                         f"(currently {args.lr}) and rerun."
                     )
 
-                optimizer.zero_grad(set_to_none=True)
-                scaler.scale(loss).backward()
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 10.0)
-                scaler.step(optimizer)
-                scaler.update()
-                scheduler.step()
-                step += 1
+                # Divide by `accumulate` so the summed gradient over the group matches
+                # the mean gradient of one effective batch.
+                scaler.scale(loss / accumulate).backward()
+                micro += 1
+
+                if micro % accumulate == 0:
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), 10.0)
+                    scaler.step(optimizer)
+                    scaler.update()
+                    optimizer.zero_grad(set_to_none=True)
+                    scheduler.step()
+                    step += 1
 
                 running += float(loss) * len(images)
                 seen += len(images)

@@ -62,10 +62,13 @@ def load_targets(gt_path: Path) -> tuple[list[tuple[int, Path]], dict[str, int]]
     return targets, name_to_cat
 
 
-def predict_yolo(
-    weights: Path, targets, name_to_cat: dict[str, int], imgsz: int, conf: float,
-    device: str, batch: int,
-) -> list[dict]:
+def load_yolo(weights: Path, name_to_cat: dict[str, int], quiet: bool = False):
+    """Load a YOLO checkpoint and build its model-index -> COCO-category map.
+
+    Shared with scripts/benchmark_cpu.py so the timed model is built exactly the way
+    the scored one was - a benchmark of a differently-constructed model would report
+    latency for something other than the row it sits beside.
+    """
     from ultralytics import YOLO
 
     model = YOLO(str(weights))
@@ -77,7 +80,31 @@ def predict_yolo(
                 f"truth ({sorted(name_to_cat)}). Refusing to guess a mapping."
             )
         idx_to_cat[int(idx)] = name_to_cat[name]
-    print(f"class map (model idx -> coco id): {idx_to_cat}")
+    if not quiet:
+        print(f"class map (model idx -> coco id): {idx_to_cat}")
+    return model, idx_to_cat
+
+
+def yolo_result_to_dets(res, image_id: int, idx_to_cat: dict[int, int]) -> list[dict]:
+    """Convert one Ultralytics Result into COCO detection dicts."""
+    # Ultralytics returns xyxy already rescaled to the ORIGINAL image size.
+    dets = []
+    for box in res.boxes:
+        x1, y1, x2, y2 = (float(v) for v in box.xyxy[0])
+        dets.append({
+            "image_id": image_id,
+            "category_id": idx_to_cat[int(box.cls[0])],
+            "bbox": [x1, y1, x2 - x1, y2 - y1],
+            "score": float(box.conf[0]),
+        })
+    return dets
+
+
+def predict_yolo(
+    weights: Path, targets, name_to_cat: dict[str, int], imgsz: int, conf: float,
+    device: str, batch: int,
+) -> list[dict]:
+    model, idx_to_cat = load_yolo(weights, name_to_cat)
 
     detections: list[dict] = []
     for start in range(0, len(targets), batch):
@@ -87,27 +114,15 @@ def predict_yolo(
             imgsz=imgsz, conf=conf, device=device, verbose=False,
         )
         for (image_id, _), res in zip(chunk, results):
-            # Ultralytics returns xyxy already rescaled to the ORIGINAL image size.
-            for box in res.boxes:
-                x1, y1, x2, y2 = (float(v) for v in box.xyxy[0])
-                detections.append({
-                    "image_id": image_id,
-                    "category_id": idx_to_cat[int(box.cls[0])],
-                    "bbox": [x1, y1, x2 - x1, y2 - y1],
-                    "score": float(box.conf[0]),
-                })
+            detections.extend(yolo_result_to_dets(res, image_id, idx_to_cat))
         print(f"\r  {min(start + batch, len(targets))}/{len(targets)} images", end="")
     print()
     return detections
 
 
-def predict_ssd(
-    weights: Path, targets, name_to_cat: dict[str, int], imgsz: int, conf: float,
-    device: str, batch: int,
-) -> list[dict]:
+def load_ssd(weights: Path, imgsz: int, device: str, quiet: bool = False):
+    """Rebuild an SSD from its checkpoint. Returns (model, checkpoint imgsz)."""
     import torch
-    from PIL import Image
-    from torchvision.transforms import functional as TF
 
     sys.path.insert(0, str(ROOT / "scripts"))
     from train_ssd import build_ssd  # noqa: PLC0415 - built in Phase 3
@@ -116,11 +131,59 @@ def predict_ssd(
     # The checkpoint's own imgsz wins: the model's anchors and head were built for it,
     # and preprocessing at a different size would silently mis-scale every box.
     ckpt_imgsz = int(ckpt["imgsz"])
-    if ckpt_imgsz != imgsz:
+    if ckpt_imgsz != imgsz and not quiet:
         print(f"  note: --imgsz {imgsz} ignored; checkpoint was trained at {ckpt_imgsz}")
     model = build_ssd(ckpt["backbone"], ckpt_imgsz, ckpt["num_classes"])
     model.load_state_dict(ckpt["model"])
     model.eval().to(device)
+    return model, ckpt_imgsz
+
+
+def ssd_preprocess(image, ckpt_imgsz: int, device: str):
+    """Decoded PIL image -> (input tensor, (sx, sy) native-rescale factors).
+
+    Takes an already-decoded image rather than a path so the benchmark harness can
+    time JPEG decode separately from preprocessing.
+    """
+    from PIL import Image
+    from torchvision.transforms import functional as TF
+
+    native_w, native_h = image.size
+    # Must mirror RocoCoco.__getitem__: the dataset pre-resizes on the CPU, so the
+    # model was trained on squashed (imgsz, imgsz) input and emits boxes in that
+    # space rather than in native pixels.
+    image = image.resize((ckpt_imgsz, ckpt_imgsz), Image.BILINEAR)
+    return TF.to_tensor(image).to(device), (native_w / ckpt_imgsz, native_h / ckpt_imgsz)
+
+
+def ssd_out_to_dets(out, image_id: int, sx: float, sy: float, conf: float) -> list[dict]:
+    """Convert one SSD output dict into COCO detections, rescaled to native pixels."""
+    dets = []
+    for box, label, score in zip(
+        out["boxes"].cpu(), out["labels"].cpu(), out["scores"].cpu()
+    ):
+        if float(score) < conf:
+            continue
+        x1, y1, x2, y2 = (float(v) for v in box)
+        x1, x2 = x1 * sx, x2 * sx
+        y1, y2 = y1 * sy, y2 * sy
+        dets.append({
+            "image_id": image_id,
+            "category_id": int(label),
+            "bbox": [x1, y1, x2 - x1, y2 - y1],
+            "score": float(score),
+        })
+    return dets
+
+
+def predict_ssd(
+    weights: Path, targets, name_to_cat: dict[str, int], imgsz: int, conf: float,
+    device: str, batch: int,
+) -> list[dict]:
+    import torch
+    from PIL import Image
+
+    model, ckpt_imgsz = load_ssd(weights, imgsz, device)
 
     detections: list[dict] = []
     with torch.inference_mode():
@@ -128,30 +191,14 @@ def predict_ssd(
             chunk = targets[start : start + batch]
             images, scales = [], []
             for _, path in chunk:
-                image = Image.open(path).convert("RGB")
-                native_w, native_h = image.size
-                # Must mirror RocoCoco.__getitem__: the dataset pre-resizes on the CPU,
-                # so the model was trained on squashed (imgsz, imgsz) input and emits
-                # boxes in that space rather than in native pixels.
-                image = image.resize((ckpt_imgsz, ckpt_imgsz), Image.BILINEAR)
-                images.append(TF.to_tensor(image).to(device))
-                scales.append((native_w / ckpt_imgsz, native_h / ckpt_imgsz))
+                tensor, scale = ssd_preprocess(
+                    Image.open(path).convert("RGB"), ckpt_imgsz, device
+                )
+                images.append(tensor)
+                scales.append(scale)
 
             for (image_id, _), (sx, sy), out in zip(chunk, scales, model(images)):
-                for box, label, score in zip(
-                    out["boxes"].cpu(), out["labels"].cpu(), out["scores"].cpu()
-                ):
-                    if float(score) < conf:
-                        continue
-                    x1, y1, x2, y2 = (float(v) for v in box)
-                    x1, x2 = x1 * sx, x2 * sx
-                    y1, y2 = y1 * sy, y2 * sy
-                    detections.append({
-                        "image_id": image_id,
-                        "category_id": int(label),
-                        "bbox": [x1, y1, x2 - x1, y2 - y1],
-                        "score": float(score),
-                    })
+                detections.extend(ssd_out_to_dets(out, image_id, sx, sy, conf))
             print(f"\r  {min(start + batch, len(targets))}/{len(targets)} images", end="")
     print()
     return detections

@@ -284,3 +284,24 @@ frames/
 datasets/
 dji-roco-central-*/
 DJI-ROCO-Central-*/
+
+# Course paperwork. The research proposal is a personal/assessed document, not a
+# project artefact - keep it local rather than in the repo history.
+Engineering Research Preparation Research Project Proposal (1) (1).pdf
+
+# GOTURN weights: ~343 MiB of Caffe model fetched by scripts/fetch_goturn.py.
+# Regenerable, far too big for git.
+models/
+
+# ARC tracking footage. CLAUDE.md: the source video may be licensed and must not be
+# redistributed - that applies to extracted frames just as much as to the mp4. Only the
+# annotations (gt/gt.txt) and seqinfo.ini are committed; rebuild frames with
+# scripts/fetch_clips.py, which records the source URL and time range in seqinfo.ini.
+data/tracking/_raw/
+data/tracking/*/img1/
+
+# Claude Code and editor configuration. Not research artefacts, and .claude/settings.json
+# embeds absolute local paths and a session UUID that mean nothing on another machine.
+# settings.local.json is local-by-convention regardless.
+.claude/
+.vscode/
