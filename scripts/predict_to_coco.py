@@ -136,7 +136,9 @@ def load_ssd(weights: Path, imgsz: int, device: str, quiet: bool = False):
     # The checkpoint records its normalisation; rebuilding with the wrong one
     # fails on missing keys, since GroupNorm and BatchNorm have different state.
     model = build_ssd(ckpt["backbone"], ckpt_imgsz, ckpt["num_classes"],
-                      norm=ckpt.get("norm", "batch"))
+                      norm=ckpt.get("norm", "batch"),
+                      min_ratio=ckpt.get("min_ratio", 0.2),
+                      max_ratio=ckpt.get("max_ratio", 0.95))
     model.load_state_dict(ckpt["model"])
     model.eval().to(device)
     return model, ckpt_imgsz

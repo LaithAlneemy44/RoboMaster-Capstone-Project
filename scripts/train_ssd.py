@@ -72,7 +72,7 @@ def _group_norm(channels: int, groups: int = 8, **_):
 
 def build_ssd(
     backbone_name: str, imgsz: int, num_classes: int, pretrained_backbone: bool = True,
-    norm: str = "batch",
+    norm: str = "batch", min_ratio: float = 0.2, max_ratio: float = 0.95,
 ):
     """Assemble SSDLite at an arbitrary input size, from either MobileNetV3 backbone."""
     import torch
@@ -121,7 +121,15 @@ def build_ssd(
         net = builder(weights=weights, norm_layer=norm_layer)
 
     backbone = _mobilenet_extractor(net, trainable_layers=6, norm_layer=norm_layer)
-    anchor_gen = DefaultBoxGenerator([[2, 3] for _ in range(6)], min_ratio=0.2, max_ratio=0.95)
+    # torchvision's SSD defaults (0.2, 0.95) are tuned for COCO/VOC, where objects
+    # fill a large fraction of the frame. This dataset is the opposite: measured
+    # against the train split, a robot is ~5.3% of frame width and an armor plate
+    # ~1.1%, so the SMALLEST default box (0.2 of the input) is roughly 4x larger than
+    # the largest object it is meant to match, at every resolution. That is a
+    # plausible reason SSD never exceeds 0.004 AP on armor while anchor-free YOLO
+    # reaches 0.44 - the anchors it would need do not exist.
+    anchor_gen = DefaultBoxGenerator([[2, 3] for _ in range(6)],
+                                     min_ratio=min_ratio, max_ratio=max_ratio)
 
     # Probe the feature-map channel counts. Must be done in EVAL mode with a batch of
     # more than one: at 320 the deepest pyramid level is 1x1, and a train-mode
@@ -297,6 +305,9 @@ def parse_args() -> argparse.Namespace:
     # epochs, so dividing the number of weight updates costs more than equalising the
     # effective batch gains. See results/detection_accum64.csv. It also did NOT fix the
     # ssd_*_960 collapse, which rules out the LR-to-batch confound as that cause.
+    parser.add_argument("--min-ratio", type=float, default=0.2,
+                        help="Smallest default box, as a fraction of input size.")
+    parser.add_argument("--max-ratio", type=float, default=0.95)
     parser.add_argument("--norm", choices=("batch", "group"), default="batch",
                         help="group = GroupNorm, batch-size independent. Tests the "
                              "ssd_*_960 collapse hypothesis.")
@@ -383,8 +394,9 @@ def main() -> None:
     if args.probe:
         print("MODE     : probe - sizing --batch, not a result\n")
 
-    model = build_ssd(args.backbone, args.imgsz, num_classes,
-                      norm=args.norm).to(device)
+    model = build_ssd(args.backbone, args.imgsz, num_classes, norm=args.norm,
+                      min_ratio=args.min_ratio,
+                      max_ratio=args.max_ratio).to(device)
     params = sum(p.numel() for p in model.parameters())
     print(f"params   : {params / 1e6:.2f}M\n")
 
@@ -446,6 +458,9 @@ def main() -> None:
             # Recorded so inference rebuilds the identical architecture; loading
             # GroupNorm weights into a BatchNorm model fails on missing keys.
             "norm": args.norm,
+            # Anchors are architecture: inference must rebuild them identically or
+            # every box is decoded against the wrong prior.
+            "min_ratio": args.min_ratio, "max_ratio": args.max_ratio,
             "imgsz": args.imgsz, "num_classes": num_classes,
             "epoch": epoch, "val_map": score, "seed": args.seed,
         }
