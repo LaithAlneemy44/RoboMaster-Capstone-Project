@@ -265,6 +265,45 @@ def time_ssd(weights: Path, imgsz: int, conf: float, frames: list[Path]):
     return decodes, headlines, stages
 
 
+def time_classical(config_name: str, conf: float, frames):
+    """Per-frame timing for the classical detector. No torch, no device - pure OpenCV.
+
+    Decode is separated the same way as for the DL families so the headline number means
+    the same thing in every row. Candidate count is tracked because the classical
+    detector's cost is dominated by how many regions its HSV gate lets through, and a
+    slow config should be attributable to its gate rather than mysterious.
+    """
+    import cv2
+
+    from classical_detector import CONFIGS, ClassicalDetector  # noqa: PLC0415
+
+    if config_name not in CONFIGS:
+        sys.exit(f"Unknown classical config {config_name!r}. "
+                 f"Choose from: {', '.join(sorted(CONFIGS))}")
+    detector = ClassicalDetector(CONFIGS[config_name])
+
+    for path in frames[:WARMUP_FRAMES]:
+        detector.detect(cv2.imread(str(path)))
+
+    decodes, headlines, stages, candidates = [], [], [], []
+    for i, path in enumerate(frames):
+        t0 = time.perf_counter()
+        image = cv2.imread(str(path))
+        t1 = time.perf_counter()
+        detector.detect(image)
+        t2 = time.perf_counter()
+        decodes.append(t1 - t0)
+        headlines.append(t2 - t1)
+        # The classical pipeline is one fused stage, so the DL split does not apply.
+        stages.append((0.0, (t2 - t1) * 1e3, 0.0))
+        candidates.append(detector.last_candidates)
+        _progress(i + 1, len(frames))
+    print()
+    time_classical.last_candidates = (
+        statistics.fmean(candidates) if candidates else 0.0)
+    return decodes, headlines, stages
+
+
 def _progress(done: int, total: int) -> None:
     print(f"\r  {done}/{total} frames", end="", flush=True)
 
@@ -292,8 +331,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--family", choices=("yolo", "ssd"), required=True)
-    parser.add_argument("--weights", type=Path, required=True)
+    parser.add_argument("--family", choices=("yolo", "ssd", "classical"),
+                        required=True)
+    # Not required for classical: it has no trained weights, only a parameter set.
+    parser.add_argument("--weights", type=Path)
+    parser.add_argument("--config", help="Classical config name, e.g. strict.")
     parser.add_argument("--name", required=True, help="Config name, e.g. yolo_960.")
     parser.add_argument("--imgsz", type=int, required=True)
     parser.add_argument("--cores", type=int, required=True,
@@ -312,7 +354,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    if not args.weights.is_file():
+    if args.family == "classical":
+        if not args.config:
+            sys.exit("--config is required for --family classical")
+    elif not args.weights or not args.weights.is_file():
         sys.exit(f"Missing weights: {args.weights}")
     if not args.gt.is_file():
         sys.exit(f"Missing {args.gt}\nRun: python scripts/make_splits.py")
@@ -338,6 +383,10 @@ def main() -> None:
         if args.family == "yolo":
             decodes, headlines, stages = time_yolo(
                 args.weights, name_to_cat, args.imgsz, args.conf, frames
+            )
+        elif args.family == "classical":
+            decodes, headlines, stages = time_classical(
+                args.config, args.conf, frames
             )
         else:
             decodes, headlines, stages = time_ssd(
@@ -375,6 +424,8 @@ def main() -> None:
         "torch_threads": torch.get_num_threads(),
         "baseline_cpu_pct": round(baseline, 1),
         "cpu_model": platform.processor(),
+        "candidates_per_frame": round(
+            getattr(time_classical, "last_candidates", 0.0), 1),
     }
 
     print(f"latency  {row['lat_mean_ms']:.1f} ms  "
@@ -390,6 +441,20 @@ def main() -> None:
         return
     args.results.parent.mkdir(parents=True, exist_ok=True)
     is_new = not args.results.exists()
+    if not is_new:
+        # The row's shape must match the header already on disk. classical adds a
+        # candidates_per_frame column the DL families do not, and appending a wider row
+        # under a narrower header silently corrupts the file for every later reader.
+        with args.results.open(newline="", encoding="utf-8") as fh:
+            header = next(csv.reader(fh), [])
+        missing = [k for k in row if k not in header]
+        if missing and header:
+            sys.exit(
+                f"{args.results.name} has no column(s) for {missing}. "
+                "Appending would produce rows wider than the header. Migrate the file "
+                "first, or write to a different --results path."
+            )
+        row = {k: row.get(k, "") for k in header}
     with args.results.open("a", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=list(row))
         if is_new:

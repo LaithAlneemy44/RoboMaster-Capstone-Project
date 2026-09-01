@@ -44,6 +44,11 @@ STOP_FILE = ROOT / "STOP"
 sys.path.insert(0, str(ROOT / "scripts"))
 from run_sweep import CONFIGS, config_name, weights_path  # noqa: E402
 
+# The classical detector has no trained weights - a config IS the model - so it is
+# listed separately rather than squeezed into run_sweep's (family, variant, imgsz)
+# tuple. Only the configs actually scored in detection.csv are benchmarked.
+CLASSICAL_CONFIGS = ("strict", "balanced", "tight", "loose")
+
 # Levels are (physical cores, use hyperthread siblings). Counted in PHYSICAL cores
 # because siblings share execution resources - see core_ids() in benchmark_cpu.py, where
 # pinning to logical 0 and 1 came out slower than pinning to logical 0 alone. The small
@@ -79,9 +84,12 @@ def run_cell(name: str, family: str, imgsz: int, weights: Path, cores: int, smt:
              frames: int) -> tuple[bool, float]:
     command = [
         PYTHON, str(ROOT / "scripts" / "benchmark_cpu.py"),
-        "--family", family, "--name", name, "--weights", str(weights),
+        "--family", family, "--name", name,
         "--imgsz", str(imgsz), "--cores", str(cores),
     ]
+    # For classical, `weights` carries the config name instead of a file path.
+    command += (["--config", str(weights)] if family == "classical"
+                else ["--weights", str(weights)])
     if smt:
         command.append("--smt")
     if frames:
@@ -150,6 +158,14 @@ def main() -> None:
         for cores, smt in levels:
             if (name, cores, smt) not in done:
                 cells.append((name, family, imgsz, weights, cores, smt))
+
+    for cfg in CLASSICAL_CONFIGS:
+        name = f"classical_{cfg}"
+        if args.only and name not in args.only:
+            continue
+        for cores, smt in levels:
+            if (name, cores, smt) not in done:
+                cells.append((name, "classical", 960, Path(cfg), cores, smt))
 
     total = len(cells)
     if not total:

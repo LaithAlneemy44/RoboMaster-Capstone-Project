@@ -305,3 +305,5 @@ data/tracking/*/img1/
 # settings.local.json is local-by-convention regardless.
 .claude/
 .vscode/
+# Ad-hoc backups; the CSV itself is committed
+results/*.csv.bak

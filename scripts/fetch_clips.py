@@ -67,7 +67,28 @@ def download(url: str, max_height: int) -> Path:
     return target
 
 
-def extract(video: Path, out_dir: Path, start: float, end: float, fps: float) -> dict:
+def parse_crop(spec: str, width: int, height: int):
+    """Parse "x,y,w,h" into a validated rectangle, or None.
+
+    Broadcast footage is not just the arena. The 2022 RMUL layout puts a scoreboard
+    across the top and TWO picture-in-picture robot cameras down the right side, so a
+    detector run on the raw frame boxes scoreboard icons and, worse, the same physical
+    robots seen a second time in the PiP feeds. Those are not duplicate detections that
+    labelling can fix - they are objects that should never have been in frame.
+    """
+    if not spec:
+        return None
+    try:
+        x, y, w, h = (int(v) for v in spec.split(","))
+    except ValueError:
+        sys.exit(f"--crop wants x,y,w,h - got {spec!r}")
+    if x < 0 or y < 0 or w <= 0 or h <= 0 or x + w > width or y + h > height:
+        sys.exit(f"--crop {spec} does not fit inside {width}x{height}")
+    return x, y, w, h
+
+
+def extract(video: Path, out_dir: Path, start: float, end: float, fps: float,
+            crop: str = "") -> dict:
     """Decode frames into out_dir/img1. Returns metadata for seqinfo.ini."""
     import cv2
 
@@ -78,6 +99,9 @@ def extract(video: Path, out_dir: Path, start: float, end: float, fps: float) ->
     native_fps = capture.get(cv2.CAP_PROP_FPS) or 30.0
     width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    rect = parse_crop(crop, width, height)
+    if rect:
+        print(f"  cropping to {rect[2]}x{rect[3]} at ({rect[0]},{rect[1]})")
 
     target_fps = fps or native_fps
     stride = max(1, round(native_fps / target_fps))
@@ -102,6 +126,9 @@ def extract(video: Path, out_dir: Path, start: float, end: float, fps: float) ->
         if end and position > end:
             break
         if source_index % stride == 0:
+            if rect:
+                x, y, w, h = rect
+                frame = frame[y:y + h, x:x + w]
             written += 1
             # 1-based %06d, exactly as MOT names its frames.
             cv2.imwrite(str(images / f"{written:06d}.jpg"), frame)
@@ -116,8 +143,9 @@ def extract(video: Path, out_dir: Path, start: float, end: float, fps: float) ->
         "native_fps": native_fps,
         "frame_rate": native_fps / stride,
         "seq_length": written,
-        "width": width,
-        "height": height,
+        "width": rect[2] if rect else width,
+        "height": rect[3] if rect else height,
+        "crop": ",".join(str(v) for v in rect) if rect else "none",
     }
 
 
@@ -142,6 +170,7 @@ def write_seqinfo(out_dir: Path, name: str, meta: dict, url: str, start: float,
         "startSeconds": str(start),
         "endSeconds": str(end or "eof"),
         "nativeFps": f"{meta['native_fps']:.6g}",
+        "crop": meta.get("crop", "none"),
         "downsampled": str(abs(meta["frame_rate"] - meta["native_fps"]) > 1e-6),
     }
     with (out_dir / "seqinfo.ini").open("w", encoding="utf-8") as fh:
@@ -159,6 +188,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fps", type=float, default=0.0,
                         help="Extraction fps. 0 = every frame (recommended).")
     parser.add_argument("--max-height", type=int, default=1080)
+    parser.add_argument("--crop", default="",
+                        help="x,y,w,h region to keep. Use it to cut broadcast "
+                             "scoreboards and picture-in-picture feeds.")
     return parser.parse_args()
 
 
@@ -169,7 +201,7 @@ def main() -> None:
         sys.exit(f"{out_dir} already has labels - refusing to re-extract over them.")
 
     video = download(args.url, args.max_height)
-    meta = extract(video, out_dir, args.start, args.end, args.fps)
+    meta = extract(video, out_dir, args.start, args.end, args.fps, args.crop)
     write_seqinfo(out_dir, args.name, meta, args.url, args.start, args.end)
 
     print(f"\n[done]  {out_dir}  ({meta['seq_length']} frames @ "

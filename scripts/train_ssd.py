@@ -55,8 +55,24 @@ LADDER = (320, 640, 960)
 # model
 # --------------------------------------------------------------------------
 
+def _group_norm(channels: int, groups: int = 8, **_):
+    """GroupNorm with a channel-count-safe group size, as a norm_layer factory.
+
+    torchvision calls norm_layer(num_features), so the signature has to match
+    BatchNorm2d's. Groups must divide the channel count, and MobileNetV3 has layers
+    with channel counts that 8 does not divide, so it is reduced until it does.
+    """
+    from torch import nn
+
+    g = min(groups, channels)
+    while g > 1 and channels % g:
+        g -= 1
+    return nn.GroupNorm(g, channels)
+
+
 def build_ssd(
-    backbone_name: str, imgsz: int, num_classes: int, pretrained_backbone: bool = True
+    backbone_name: str, imgsz: int, num_classes: int, pretrained_backbone: bool = True,
+    norm: str = "batch",
 ):
     """Assemble SSDLite at an arbitrary input size, from either MobileNetV3 backbone."""
     import torch
@@ -72,14 +88,37 @@ def build_ssd(
     if backbone_name not in BACKBONES:
         sys.exit(f"Unknown backbone {backbone_name!r}; expected one of {BACKBONES}")
 
-    # eps/momentum match torchvision's ssdlite recipe.
-    norm_layer = partial(nn.BatchNorm2d, eps=0.001, momentum=0.03)
-    if backbone_name == "large":
-        weights = MobileNet_V3_Large_Weights.IMAGENET1K_V1 if pretrained_backbone else None
-        net = mobilenet_v3_large(weights=weights, norm_layer=norm_layer)
+    # BatchNorm is the default and matches torchvision's ssdlite recipe (eps/momentum). GroupNorm is
+    # the hypothesis under test for the ssd_*_960 collapse: VRAM forces batch 8 at
+    # 960px, and BatchNorm estimates its statistics from the batch, so 8 samples give
+    # noisy normalisation. GroupNorm normalises within a sample and is therefore
+    # batch-size independent - if the collapse is a BatchNorm effect, this fixes it,
+    # and if it does not, BatchNorm is ruled out the way gradient accumulation was.
+    if norm == "group":
+        norm_layer = partial(_group_norm, groups=8)
     else:
-        weights = MobileNet_V3_Small_Weights.IMAGENET1K_V1 if pretrained_backbone else None
-        net = mobilenet_v3_small(weights=weights, norm_layer=norm_layer)
+        norm_layer = partial(nn.BatchNorm2d, eps=0.001, momentum=0.03)
+    large = backbone_name == "large"
+    chosen = (MobileNet_V3_Large_Weights if large else MobileNet_V3_Small_Weights)
+    builder = mobilenet_v3_large if large else mobilenet_v3_small
+
+    if norm == "group" and pretrained_backbone:
+        # The ImageNet checkpoint is BatchNorm-based, so it carries running_mean,
+        # running_var and num_batches_tracked that a GroupNorm model has no slots for,
+        # and torchvision's strict load refuses it outright. Loading non-strictly keeps
+        # what matters - every convolution weight, plus the affine scale and bias, which
+        # have identical shapes under both norms - and discards only the running
+        # statistics, which are meaningless for GroupNorm anyway.
+        net = builder(weights=None, norm_layer=norm_layer)
+        state = chosen.IMAGENET1K_V1.get_state_dict(progress=False)
+        missing, unexpected = net.load_state_dict(state, strict=False)
+        dropped = sum(1 for k in unexpected if "running_" in k or "num_batches" in k)
+        print(f"  GroupNorm backbone: transferred pretrained weights, dropped "
+              f"{dropped} BatchNorm statistic tensors ({len(missing)} params left "
+              f"at init)")
+    else:
+        weights = chosen.IMAGENET1K_V1 if pretrained_backbone else None
+        net = builder(weights=weights, norm_layer=norm_layer)
 
     backbone = _mobilenet_extractor(net, trainable_layers=6, norm_layer=norm_layer)
     anchor_gen = DefaultBoxGenerator([[2, 3] for _ in range(6)], min_ratio=0.2, max_ratio=0.95)
@@ -258,6 +297,9 @@ def parse_args() -> argparse.Namespace:
     # epochs, so dividing the number of weight updates costs more than equalising the
     # effective batch gains. See results/detection_accum64.csv. It also did NOT fix the
     # ssd_*_960 collapse, which rules out the LR-to-batch confound as that cause.
+    parser.add_argument("--norm", choices=("batch", "group"), default="batch",
+                        help="group = GroupNorm, batch-size independent. Tests the "
+                             "ssd_*_960 collapse hypothesis.")
     parser.add_argument("--nbs", type=int, default=0,
                         help="Nominal (effective) batch size to accumulate to. "
                              "Matches Ultralytics' nbs so both families train at "
@@ -341,7 +383,8 @@ def main() -> None:
     if args.probe:
         print("MODE     : probe - sizing --batch, not a result\n")
 
-    model = build_ssd(args.backbone, args.imgsz, num_classes).to(device)
+    model = build_ssd(args.backbone, args.imgsz, num_classes,
+                      norm=args.norm).to(device)
     params = sum(p.numel() for p in model.parameters())
     print(f"params   : {params / 1e6:.2f}M\n")
 
@@ -362,7 +405,12 @@ def main() -> None:
     # protected by accumulation and SSD was not. Resolution has to be the only variable.
     accumulate = max(1, round(args.nbs / args.batch)) if args.nbs else 1
     effective_batch = args.batch * accumulate
-    weight_decay = args.weight_decay * effective_batch / args.nbs
+    # --nbs 0 means accumulation is off, so there is no nominal batch to scale
+    # against and weight decay is used as given. Guarding only the `accumulate`
+    # line left this one dividing by zero, which broke every SSD run after
+    # accumulation was disabled by default.
+    weight_decay = (args.weight_decay * effective_batch / args.nbs
+                    if args.nbs else args.weight_decay)
 
     optimizer = torch.optim.SGD(
         [p for p in model.parameters() if p.requires_grad],
@@ -395,6 +443,9 @@ def main() -> None:
         """best.pt stays lean for inference; last.pt carries the state a resume needs."""
         payload = {
             "model": model.state_dict(), "backbone": args.backbone,
+            # Recorded so inference rebuilds the identical architecture; loading
+            # GroupNorm weights into a BatchNorm model fails on missing keys.
+            "norm": args.norm,
             "imgsz": args.imgsz, "num_classes": num_classes,
             "epoch": epoch, "val_map": score, "seed": args.seed,
         }

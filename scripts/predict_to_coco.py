@@ -133,7 +133,10 @@ def load_ssd(weights: Path, imgsz: int, device: str, quiet: bool = False):
     ckpt_imgsz = int(ckpt["imgsz"])
     if ckpt_imgsz != imgsz and not quiet:
         print(f"  note: --imgsz {imgsz} ignored; checkpoint was trained at {ckpt_imgsz}")
-    model = build_ssd(ckpt["backbone"], ckpt_imgsz, ckpt["num_classes"])
+    # The checkpoint records its normalisation; rebuilding with the wrong one
+    # fails on missing keys, since GroupNorm and BatchNorm have different state.
+    model = build_ssd(ckpt["backbone"], ckpt_imgsz, ckpt["num_classes"],
+                      norm=ckpt.get("norm", "batch"))
     model.load_state_dict(ckpt["model"])
     model.eval().to(device)
     return model, ckpt_imgsz
@@ -204,6 +207,49 @@ def predict_ssd(
     return detections
 
 
+def predict_classical(
+    config_name: str, targets, name_to_cat: dict[str, int], conf: float,
+) -> list[dict]:
+    """The classical detector. No weights file - a config IS the model here.
+
+    It has no training stage, so nothing is loaded from disk except the template bank,
+    and it detects a single class. Everything else goes through the same COCO shape as
+    the DL families so the evaluator cannot tell them apart.
+    """
+    import cv2
+
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from classical_detector import CONFIGS, ClassicalDetector  # noqa: PLC0415
+
+    if config_name not in CONFIGS:
+        sys.exit(f"Unknown classical config {config_name!r}. "
+                 f"Choose from: {', '.join(sorted(CONFIGS))}")
+    detector = ClassicalDetector(CONFIGS[config_name])
+
+    detections: list[dict] = []
+    candidates = 0
+    for index, (image_id, path) in enumerate(targets):
+        frame = cv2.imread(str(path))
+        if frame is None:
+            continue
+        for (x, y, w, h), score, cls in detector.detect(frame):
+            if score < conf:
+                continue
+            if cls not in name_to_cat:
+                sys.exit(f"Detector emitted class {cls!r}, absent from the ground "
+                         f"truth ({sorted(name_to_cat)}).")
+            detections.append({
+                "image_id": image_id,
+                "category_id": name_to_cat[cls],
+                "bbox": [x, y, w, h],
+                "score": score,
+            })
+        candidates += detector.last_candidates
+        print(f"\r  {index + 1}/{len(targets)} images", end="")
+    print(f"\n  mean candidate regions/frame: {candidates / max(1, len(targets)):.0f}")
+    return detections
+
+
 def assert_native_scale(detections: list[dict], gt_path: Path) -> None:
     """Catch predictions left in resized-input coordinates instead of native ones.
 
@@ -229,8 +275,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--family", choices=("yolo", "ssd"), required=True)
-    parser.add_argument("--weights", type=Path, required=True)
+    parser.add_argument("--family", choices=("yolo", "ssd", "classical"), required=True)
+    # Not required for classical: it has no trained weights, only a parameter set.
+    parser.add_argument("--weights", type=Path)
+    parser.add_argument("--config", help="Classical config name, e.g. strict.")
     parser.add_argument("--gt", type=Path, default=DEFAULT_GT)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--imgsz", type=int, default=640)
@@ -242,7 +290,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    if not args.weights.is_file():
+    if args.family == "classical":
+        if not args.config:
+            sys.exit("--config is required for --family classical")
+    elif not args.weights or not args.weights.is_file():
         sys.exit(f"Missing weights: {args.weights}")
     if not args.gt.is_file():
         sys.exit(f"Missing {args.gt}\nRun: python scripts/make_splits.py")
@@ -250,16 +301,19 @@ def main() -> None:
     targets, name_to_cat = load_targets(args.gt)
     device = normalise_device(args.device)
     print(f"family : {args.family}")
-    print(f"weights: {args.weights}")
+    print(f"model  : {args.config if args.family == 'classical' else args.weights}")
     print(f"images : {len(targets)}   imgsz: {args.imgsz}   conf: {args.conf}")
     print(f"device : {device}")
 
-    predict = predict_yolo if args.family == "yolo" else predict_ssd
     start = time.perf_counter()
-    detections = predict(
-        args.weights, targets, name_to_cat, args.imgsz, args.conf,
-        device, args.batch,
-    )
+    if args.family == "classical":
+        detections = predict_classical(args.config, targets, name_to_cat, args.conf)
+    else:
+        predict = predict_yolo if args.family == "yolo" else predict_ssd
+        detections = predict(
+            args.weights, targets, name_to_cat, args.imgsz, args.conf,
+            device, args.batch,
+        )
     elapsed = time.perf_counter() - start
 
     print(f"\n{len(detections)} detections in {elapsed:.1f}s")
