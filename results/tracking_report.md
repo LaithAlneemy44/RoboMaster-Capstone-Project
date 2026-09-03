@@ -18,6 +18,7 @@ One row per detector+tracker pairing, averaged over sequences. `RT` marks >= 30 
 | 1 | `yolo_960` | `sort` | 402.5 | 0.4 | 402.8 | 2.5 |  | 0% | 5.1 | 98 | 859 |
 | 1 | `yolo_960` | `classical` | 404.0 | 0.1 | 404.2 | 2.5 |  | 0% | 5.1 | 97 | 830 |
 | 1 | `yolo_960` | `vit` | 402.2 | 94.0 | 496.2 | 2.0 |  | 19% | 5.1 | 97 | 854 |
+| 1 | `frcnn_resnet50_640` | `sort` | 2255.2 | 0.5 | 2255.6 | 0.4 |  | 0% | 6.3 | 98 | 1046 |
 | 1 | `ssd_small_960_anchor` | `goturn` | 154.4 | 3685.0 | 3839.4 | 0.3 |  | 96% | 4.4 | 98 | 5933 |
 | 1 | `fast_960` | `goturn` | 163.5 | 4308.7 | 4472.2 | 0.2 |  | 96% | 5.0 | 98 | 7211 |
 | 1 | `yolo_960` | `goturn` | 405.7 | 4309.4 | 4715.1 | 0.2 |  | 91% | 5.1 | 98 | 7292 |
@@ -42,6 +43,7 @@ One row per detector+tracker pairing, averaged over sequences. `RT` marks >= 30 
 | 6 | `ssd_small_960_anchor` | `vit` | 95.3 | 83.0 | 178.4 | 5.7 |  | 45% | 4.7 | 98 | 798 |
 | 6 | `strict` | `vit` | 22.5 | 278.0 | 300.5 | 4.2 |  | 92% | 11.6 | 34 | 735 |
 | 6 | `yolo_960` | `vit` | 155.7 | 101.8 | 257.5 | 3.9 |  | 39% | 5.1 | 97 | 878 |
+| 6 | `frcnn_resnet50_640` | `sort` | 736.4 | 0.5 | 736.9 | 1.4 |  | 0% | 6.3 | 99 | 1055 |
 | 6 | `ssd_small_960_anchor` | `goturn` | 102.0 | 3398.2 | 3500.2 | 0.3 |  | 97% | 4.4 | 26 | 5943 |
 | 6 | `yolo_960` | `goturn` | 153.2 | 4178.4 | 4331.6 | 0.2 |  | 96% | 5.1 | 23 | 7347 |
 | 6 | `fast_960` | `goturn` | 67.0 | 4215.6 | 4282.7 | 0.2 |  | 98% | 5.0 | 21 | 7272 |
@@ -49,10 +51,10 @@ One row per detector+tracker pairing, averaged over sequences. `RT` marks >= 30 
 
 Fastest pairing at each core level:
 
-- **1 core(s)** — `strict` + `classical`, 30.9 ms (33.9 FPS) — best of 16 pairings measured at this level
+- **1 core(s)** — `strict` + `classical`, 30.9 ms (33.9 FPS) — best of 17 pairings measured at this level
 - **2 core(s)** — `yolo_960` + `sort`, 256.5 ms (3.9 FPS) — best of 4 pairings measured at this level
 - **4 core(s)** — `yolo_960` + `sort`, 152.3 ms (6.6 FPS) — best of 4 pairings measured at this level
-- **6 core(s)** — `strict` + `classical`, 22.9 ms (47.9 FPS) — best of 16 pairings measured at this level
+- **6 core(s)** — `strict` + `classical`, 22.9 ms (47.9 FPS) — best of 17 pairings measured at this level
 
 ## Accuracy (secondary — see the caveat below)
 

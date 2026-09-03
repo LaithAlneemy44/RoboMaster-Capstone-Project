@@ -314,3 +314,4 @@ results/*.csv.bak
 results/chain_log.txt
 results/rescore_log.txt
 results/frcnn_train.log
+results/frcnn_bench_log.txt
