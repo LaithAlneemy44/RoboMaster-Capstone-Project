@@ -230,14 +230,21 @@ def time_yolo(weights: Path, name_to_cat, imgsz: int, conf: float, frames: list[
     return decodes, headlines, stages
 
 
-def time_ssd(weights: Path, imgsz: int, conf: float, frames: list[Path]):
-    """Per-frame (decode_s, headline_s) for an SSD, with an explicit stage breakdown."""
+def time_ssd(weights: Path, imgsz: int, conf: float, frames: list[Path],
+             family: str = "ssd"):
+    """Per-frame (decode_s, headline_s) for a torchvision detector, staged.
+
+    Shared by SSD and Faster R-CNN: they differ only in the loader, since train_frcnn.py
+    pins the R-CNN's internal transform to imgsz, so both take a square imgsz tensor and
+    return boxes in that same space.
+    """
     import torch
     from PIL import Image
 
-    from predict_to_coco import load_ssd, ssd_out_to_dets, ssd_preprocess
+    from predict_to_coco import load_frcnn, load_ssd, ssd_out_to_dets, ssd_preprocess
 
-    model, ckpt_imgsz = load_ssd(weights, imgsz, "cpu", quiet=True)
+    load = load_ssd if family == "ssd" else load_frcnn
+    model, ckpt_imgsz = load(weights, imgsz, "cpu", quiet=True)
 
     def one(path):
         t0 = time.perf_counter()
@@ -331,7 +338,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--family", choices=("yolo", "ssd", "classical"),
+    parser.add_argument("--family", choices=("yolo", "ssd", "frcnn", "classical"),
                         required=True)
     # Not required for classical: it has no trained weights, only a parameter set.
     parser.add_argument("--weights", type=Path)
@@ -390,7 +397,7 @@ def main() -> None:
             )
         else:
             decodes, headlines, stages = time_ssd(
-                args.weights, args.imgsz, args.conf, frames
+                args.weights, args.imgsz, args.conf, frames, args.family
             )
     print()
 

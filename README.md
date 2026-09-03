@@ -24,10 +24,30 @@ A "perception model" here means one **detection** model paired with one **tracki
 | `scripts/make_splits.py` | Builds train/val lists for both formats without touching `Datasets/` |
 | `scripts/train_yolo.py` | Fine-tunes YOLO from COCO-pretrained weights, GPU-only |
 | `scripts/train_ssd.py` | Fine-tunes MobileNet-SSD (SSDLite) at any ladder rung, GPU-only |
-| `scripts/predict_to_coco.py` | Runs a trained model over val, writes COCO detections |
+| `scripts/train_frcnn.py` | Fine-tunes Faster R-CNN — the detector SORT is defined with |
+| `scripts/classical_detector.py` | The from-scratch detector: HSV gate → template match → NCC |
+| `scripts/build_templates.py` | Builds the classical detector's template bank, train split only |
+| `scripts/predict_to_coco.py` | Runs any detector family over val, writes COCO detections |
 | `scripts/evaluate_detection.py` | **The single evaluator** — scores every model family |
+| **Tracking** | |
+| `scripts/fetch_clips.py` | Pulls ARC clips and extracts frames into MOT layout |
+| `scripts/auto_label.py` | Builds tracking ground truth automatically — no hand labelling |
+| `scripts/label_tracks.py` | Interactive corrector for the auto labels (optional) |
+| `scripts/make_tracking_splits.py` | Whole-clip train/val/test split for the tracking data |
+| `scripts/classical_tracker.py` | The from-scratch tracker: kinematics + Kalman, greedy match |
+| `scripts/sort.py` | SORT's tracker: Kalman + Hungarian, published formulation |
+| `scripts/run_trackers.py` | One driver for all four trackers, any detector family |
+| `scripts/eval_tracking.py` | MOT metrics — MOTA, IDF1, ID switches, bootstrap CIs |
+| **Benchmarking (the contribution)** | |
+| `scripts/benchmark_cpu.py` | Detection latency/FPS/CPU%/RAM under an enforced core cap |
+| `scripts/benchmark_tracking.py` | The same, for a detector+tracker pipeline |
+| `scripts/run_benchmark.py` | Drives the detection benchmark grid, resumable |
+| `scripts/run_matrix.py` | Drives the detector × tracker × cores grid, resumable |
+| `scripts/report_table.py` | Joins detection accuracy and cost into `results/combined.md` |
+| `scripts/report_tracking.py` | The same for tracking → `results/tracking_report.md` |
 | `data/manifest.sha256` | SHA-256 of all 7973 dataset files (provenance + integrity) |
-| `data/splits/assignment.csv` | **The split of record** — every image's clip and train/val side |
+| `data/splits/assignment.csv` | **The detection split of record** — every image's clip and side |
+| `data/tracking/assignment.csv` | **The tracking split of record** — whole clips, train/val/test |
 | `data/roco_central.yaml` | Generated Ultralytics data config — the training entry point |
 | `data/splits/` | Generated image lists + merged COCO annotations (not committed) |
 | `Datasets/` | The dataset itself — **not committed**, see below |

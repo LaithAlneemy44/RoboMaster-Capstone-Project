@@ -68,6 +68,10 @@ def join(accuracy: list[dict], performance: list[dict]) -> list[dict]:
             "mAP_50": acc.get("mAP_50", ""),
             "map_ci_low": acc.get("ci_low", ""),
             "map_ci_high": acc.get("ci_high", ""),
+            "best_f1_macro": acc.get("best_f1_macro", ""),
+            "precision_at_best_f1": acc.get("precision_at_best_f1", ""),
+            "recall_at_best_f1": acc.get("recall_at_best_f1", ""),
+            "mean_tp_iou": acc.get("mean_tp_iou", ""),
             "AP_armor": acc.get("AP_armor", ""),
             "AP_base": acc.get("AP_base", ""),
             "AP_car": acc.get("AP_car", ""),
@@ -97,6 +101,42 @@ def markdown(rows: list[dict], fps_target: float) -> str:
         f"standing in for constrained hardware. `RT` marks ≥ {fps_target:g} FPS.",
         "",
     ]
+    # Accuracy does not depend on the core cap, so it is stated once here rather than
+    # repeated identically in every per-core section below. Precision, recall and F1 are
+    # taken at the best-F1 operating point; mean TP IoU is how tight the boxes that
+    # matched actually are, which mAP does not answer - mAP asks only whether a box
+    # cleared a threshold, never by how much.
+    seen: set[str] = set()
+    quality = []
+    for r in sorted(rows, key=lambda r: -f(r, "mAP_50_95", -1)):
+        if r["name"] not in seen and r.get("mAP_50_95") != "":
+            seen.add(r["name"])
+            quality.append(r)
+    if quality:
+        out += [
+            "## Detection quality (independent of the core cap)",
+            "",
+            "| config | mAP@.5:.95 | 95% CI | precision | recall | F1 | mean TP IoU "
+            "| armor AP |",
+            "|---|---|---|---|---|---|---|---|",
+        ]
+        for r in quality:
+            out.append(
+                f"| `{r['name']}` | {f(r, 'mAP_50_95'):.4f} | "
+                f"[{f(r, 'map_ci_low'):.3f}, {f(r, 'map_ci_high'):.3f}] | "
+                f"{f(r, 'precision_at_best_f1'):.3f} | "
+                f"{f(r, 'recall_at_best_f1'):.3f} | "
+                f"{f(r, 'best_f1_macro'):.3f} | {f(r, 'mean_tp_iou'):.3f} | "
+                f"{f(r, 'AP_armor'):.4f} |"
+            )
+        out += ["",
+                "Precision and recall are read at the best-F1 point on the IoU=0.5 "
+                "curve, not at a fixed confidence threshold: a score of 0.25 does not "
+                "mean the same thing to YOLO as to SSD, so a fixed threshold would make "
+                "these columns incomparable across the models the table exists to "
+                "compare.",
+                ""]
+
     for cores, smt in sorted({(r["cores"], r["smt"]) for r in rows}):
         group = [r for r in rows if r["cores"] == cores and r["smt"] == smt]
         suffix = " + SMT (full machine)" if smt else ""

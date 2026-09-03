@@ -60,6 +60,13 @@ EXTRA_SSD = (
     ("ssd_small_960_groupnorm", 960),
 )
 
+# Faster R-CNN, the detector SORT is defined with. Benchmarked alongside the others so
+# the published baseline appears on the same latency axis as the models being compared
+# rather than being described from its paper.
+EXTRA_FRCNN = (
+    ("frcnn_resnet50_640", 640),
+)
+
 # Levels are (physical cores, use hyperthread siblings). Counted in PHYSICAL cores
 # because siblings share execution resources - see core_ids() in benchmark_cpu.py, where
 # pinning to logical 0 and 1 came out slower than pinning to logical 0 alone. The small
@@ -183,6 +190,17 @@ def main() -> None:
         for cores, smt in levels:
             if (name, cores, smt) not in done:
                 cells.append((name, "ssd", imgsz, weights, cores, smt))
+
+    for name, imgsz in EXTRA_FRCNN:
+        if args.only and name not in args.only:
+            continue
+        weights = ROOT / "runs" / "frcnn" / name / "best.pt"
+        if not weights.is_file():
+            print(f"skip {name}: no weights at {weights}")
+            continue
+        for cores, smt in levels:
+            if (name, cores, smt) not in done:
+                cells.append((name, "frcnn", imgsz, weights, cores, smt))
 
     for cfg in CLASSICAL_CONFIGS:
         name = f"classical_{cfg}"
