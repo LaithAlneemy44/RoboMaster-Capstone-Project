@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import sys
 from pathlib import Path
 
@@ -28,6 +29,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 ROOT = Path(__file__).resolve().parent.parent
+PREDICTIONS = ROOT / "results" / "predictions"
 DETECTION = ROOT / "results" / "detection.csv"
 PERFORMANCE = ROOT / "results" / "performance.csv"
 OUT_CSV = ROOT / "results" / "combined.csv"
@@ -46,6 +48,28 @@ def f(row: dict, key: str, default: float = float("nan")) -> float:
         return float(row[key])
     except (KeyError, TypeError, ValueError):
         return default
+
+
+def check_predictions_fresh(accuracy: list[dict]) -> list[str]:
+    """Names whose recorded predictions hash no longer matches the file on disk.
+
+    Guards against the failure this table actually had: predict_to_coco.py was fixed,
+    every SSD's predictions were regenerated, and detection.csv kept scoring from the
+    old ones. Nothing crashed and the numbers stayed plausible, so five configs were
+    reported wrong - ssd_small_960 as 0.1193 when its predictions scored 0.0626 - until
+    a full re-score happened to surface it.
+    """
+    stale = []
+    for row in accuracy:
+        digest = row.get("predictions_sha1", "")
+        if not digest:
+            continue
+        path = PREDICTIONS / f"{row['name']}.json"
+        if not path.is_file():
+            continue
+        if hashlib.sha1(path.read_bytes()).hexdigest()[:12] != digest:
+            stale.append(row["name"])
+    return stale
 
 
 def join(accuracy: list[dict], performance: list[dict]) -> list[dict]:
@@ -173,7 +197,15 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    rows = join(read_csv(DETECTION), read_csv(PERFORMANCE))
+    accuracy = read_csv(DETECTION)
+    stale = check_predictions_fresh(accuracy)
+    if stale:
+        print("Refusing to build the table: these rows were scored from predictions "
+              "that have since changed on disk -")
+        for name in stale:
+            print(f"  {name}")
+        raise SystemExit("Re-score them:  bash scripts/rescore_detection.sh")
+    rows = join(accuracy, read_csv(PERFORMANCE))
     if args.cores is not None:
         rows = [r for r in rows if r["cores"] == args.cores]
     if not rows:

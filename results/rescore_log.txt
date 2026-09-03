@@ -18,3 +18,78 @@ Score it:
   python scripts/evaluate_detection.py --predictions results\predictions\ssd_small_960_groupnorm.json --name <config-name>
 
 score classical_balanced
+    precision 0.0193   recall 0.0500   mean TP IoU 0.6508   (best-F1 point, IoU>=0.5)
+    mAP@[.5:.95] 0.0016   95% CI [0.0015, 0.0019]  (1000 resamples over 397 images)
+score classical_loose
+    precision 0.0136   recall 0.0425   mean TP IoU 0.6673   (best-F1 point, IoU>=0.5)
+    mAP@[.5:.95] 0.0010   95% CI [0.0009, 0.0012]  (1000 resamples over 397 images)
+score classical_paired
+    precision 0.0178   recall 0.0225   mean TP IoU 0.5872   (best-F1 point, IoU>=0.5)
+    mAP@[.5:.95] 0.0006   95% CI [0.0004, 0.0007]  (1000 resamples over 397 images)
+score classical_strict
+    precision 0.0360   recall 0.0600   mean TP IoU 0.6530   (best-F1 point, IoU>=0.5)
+    mAP@[.5:.95] 0.0028   95% CI [0.0023, 0.0037]  (1000 resamples over 397 images)
+score classical_tight
+    precision 0.0368   recall 0.0625   mean TP IoU 0.6446   (best-F1 point, IoU>=0.5)
+    mAP@[.5:.95] 0.0030   95% CI [0.0025, 0.0038]  (1000 resamples over 397 images)
+score fast_320
+    precision 0.7578   recall 0.7225   mean TP IoU 0.8166   (best-F1 point, IoU>=0.5)
+    mAP@[.5:.95] 0.4965   95% CI [0.4900, 0.5040]  (1000 resamples over 397 images)
+score fast_640
+    precision 0.9420   recall 0.9025   mean TP IoU 0.7606   (best-F1 point, IoU>=0.5)
+    mAP@[.5:.95] 0.6073   95% CI [0.6018, 0.6134]  (1000 resamples over 397 images)
+score fast_960
+    precision 0.9723   recall 0.9550   mean TP IoU 0.7876   (best-F1 point, IoU>=0.5)
+    mAP@[.5:.95] 0.6399   95% CI [0.6347, 0.6470]  (1000 resamples over 397 images)
+score ssd_large_320
+    precision 0.5618   recall 0.4475   mean TP IoU 0.6656   (best-F1 point, IoU>=0.5)
+    mAP@[.5:.95] 0.1695   95% CI [0.1608, 0.1808]  (1000 resamples over 397 images)
+score ssd_large_320_anchor
+    precision 0.6643   recall 0.6600   mean TP IoU 0.6818   (best-F1 point, IoU>=0.5)
+    mAP@[.5:.95] 0.2872   95% CI [0.2786, 0.2994]  (1000 resamples over 397 images)
+score ssd_large_640
+    precision 0.6016   recall 0.5725   mean TP IoU 0.6806   (best-F1 point, IoU>=0.5)
+    mAP@[.5:.95] 0.2120   95% CI [0.2022, 0.2241]  (1000 resamples over 397 images)
+score ssd_large_640_anchor
+    precision 0.8212   recall 0.8025   mean TP IoU 0.7066   (best-F1 point, IoU>=0.5)
+    mAP@[.5:.95] 0.4510   95% CI [0.4432, 0.4612]  (1000 resamples over 397 images)
+score ssd_large_960
+    precision 0.4737   recall 0.3525   mean TP IoU 0.6462   (best-F1 point, IoU>=0.5)
+    mAP@[.5:.95] 0.1046   95% CI [0.0957, 0.1173]  (1000 resamples over 397 images)
+score ssd_large_960_anchor
+    precision 0.8463   recall 0.8550   mean TP IoU 0.7123   (best-F1 point, IoU>=0.5)
+    mAP@[.5:.95] 0.5068   95% CI [0.5011, 0.5142]  (1000 resamples over 397 images)
+score ssd_small_320
+    precision 0.5219   recall 0.4700   mean TP IoU 0.6551   (best-F1 point, IoU>=0.5)
+    mAP@[.5:.95] 0.1353   95% CI [0.1263, 0.1478]  (1000 resamples over 397 images)
+score ssd_small_320_anchor
+    precision 0.6273   recall 0.6275   mean TP IoU 0.6750   (best-F1 point, IoU>=0.5)
+    mAP@[.5:.95] 0.2816   95% CI [0.2726, 0.2937]  (1000 resamples over 397 images)
+score ssd_small_640
+    precision 0.6019   recall 0.5175   mean TP IoU 0.6782   (best-F1 point, IoU>=0.5)
+    mAP@[.5:.95] 0.2088   95% CI [0.1986, 0.2221]  (1000 resamples over 397 images)
+score ssd_small_640_anchor
+    precision 0.7789   recall 0.7750   mean TP IoU 0.7073   (best-F1 point, IoU>=0.5)
+    mAP@[.5:.95] 0.4580   95% CI [0.4503, 0.4653]  (1000 resamples over 397 images)
+score ssd_small_960
+    precision 0.3168   recall 0.2300   mean TP IoU 0.6372   (best-F1 point, IoU>=0.5)
+    mAP@[.5:.95] 0.0626   95% CI [0.0554, 0.0725]  (1000 resamples over 397 images)
+score ssd_small_960_anchor
+    precision 0.8358   recall 0.8275   mean TP IoU 0.7067   (best-F1 point, IoU>=0.5)
+    mAP@[.5:.95] 0.5137   95% CI [0.5091, 0.5208]  (1000 resamples over 397 images)
+score ssd_small_960_gn
+    precision 0.6219   recall 0.2800   mean TP IoU 0.6819   (best-F1 point, IoU>=0.5)
+    mAP@[.5:.95] 0.1276   95% CI [0.1189, 0.1391]  (1000 resamples over 397 images)
+score ssd_small_960_groupnorm
+    precision 0.6221   recall 0.2800   mean TP IoU 0.6818   (best-F1 point, IoU>=0.5)
+    mAP@[.5:.95] 0.1276   95% CI [0.1189, 0.1391]  (1000 resamples over 397 images)
+score yolo_320
+    precision 0.8754   recall 0.7750   mean TP IoU 0.7811   (best-F1 point, IoU>=0.5)
+    mAP@[.5:.95] 0.5169   95% CI [0.5118, 0.5237]  (1000 resamples over 397 images)
+score yolo_640
+    precision 0.9693   recall 0.9525   mean TP IoU 0.7717   (best-F1 point, IoU>=0.5)
+    mAP@[.5:.95] 0.6263   95% CI [0.6219, 0.6336]  (1000 resamples over 397 images)
+score yolo_960
+    precision 0.9733   recall 0.9550   mean TP IoU 0.7837   (best-F1 point, IoU>=0.5)
+    mAP@[.5:.95] 0.6679   95% CI [0.6619, 0.6749]  (1000 resamples over 397 images)
+DONE

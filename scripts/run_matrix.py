@@ -61,6 +61,15 @@ DETECTORS = (
 )
 TRACKERS = ("classical", "sort", "vit", "goturn")
 
+# SORT is a complete published system, not a tracker to be mixed and matched: CLAUDE.md
+# says it is "tested standalone, not combined with other models". Its detector therefore
+# pairs ONLY with its own tracker and is deliberately kept out of the cross product -
+# frcnn + vit is not a thing anyone proposed and would not mean anything.
+STANDALONE = (
+    ("frcnn_resnet50_640", "frcnn",
+     ROOT / "runs" / "frcnn" / "frcnn_resnet50_640" / "best.pt", 640, "sort"),
+)
+
 # arc02 is a moderately busy clip; arc06 carries the most ground-truth objects of the
 # seven, so the single-object trackers' per-robot cost shows up as a difference between
 # the two rather than having to be argued for.
@@ -148,6 +157,20 @@ def main() -> None:
                     cells.append(
                         (seq, tracker, label, family, weights, imgsz, cores, frames)
                     )
+
+    for label, family, weights, imgsz, tracker in STANDALONE:
+        if not Path(weights).is_file():
+            print(f"skip {label}: no weights at {weights} "
+                  f"(train it: python scripts/train_frcnn.py)")
+            continue
+        if args.trackers != list(TRACKERS) and tracker not in args.trackers:
+            continue
+        for seq in args.seq:
+            for cores in args.cores:
+                if (seq, tracker, label, cores) in done:
+                    continue
+                cells.append((seq, tracker, label, family, weights, imgsz, cores,
+                              args.frames))
 
     total = len(cells)
     if not total:

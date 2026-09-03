@@ -35,6 +35,7 @@ import argparse
 import copy
 import csv
 import json
+import hashlib
 import random
 import sys
 from pathlib import Path
@@ -408,9 +409,18 @@ def main() -> None:
             f"{'n/a' if np.isnan(f1_class[k]) else f'{f1_class[k]:.4f}':>12}"
         )
 
+    # Fingerprint of the predictions this row was computed from. Rows in this CSV once
+    # drifted from their prediction files without anyone noticing: predict_to_coco.py was
+    # fixed, every SSD's predictions were regenerated, and the CSV kept the scores from
+    # the old ones - ssd_small_960 read 0.1193 when its file actually scored 0.0626. The
+    # numbers looked plausible, so nothing flagged it. Recording the hash makes the
+    # mismatch detectable instead of invisible.
+    digest = hashlib.sha1(args.predictions.read_bytes()).hexdigest()[:12]
+
     row = {
         "name": name,
         "images": len(scored_gt["images"]),
+        "predictions_sha1": digest,
         "mAP_50_95": round(m_all, 6),
         "mAP_50": round(m50, 6),
         "mAP_75": round(float(coco_eval.stats[2]), 6),
