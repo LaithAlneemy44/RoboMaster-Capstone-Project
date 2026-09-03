@@ -14,3 +14,7 @@ predict classical_paired
 Score it:
   python scripts/evaluate_detection.py --predictions results\predictions\classical_paired.json --name <config-name>
 predict ssd_small_960_groupnorm
+Score it:
+  python scripts/evaluate_detection.py --predictions results\predictions\ssd_small_960_groupnorm.json --name <config-name>
+
+score classical_balanced

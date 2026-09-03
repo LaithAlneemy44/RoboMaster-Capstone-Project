@@ -312,3 +312,5 @@ results/*.csv.bak
 # scripts/run_headtohead.sh, and they interleave subprocess output rather than
 # recording anything the results CSVs do not already hold.
 results/chain_log.txt
+results/rescore_log.txt
+results/frcnn_train.log
