@@ -58,40 +58,54 @@ Fastest pairing at each core level:
 
 **Read IDF1 and ID switches, not MOTA.** Every tracker in a given row group is fed by the same detector, and MOTA is dominated by that detector's misses and false positives, which are therefore identical across trackers; only the ID-switch term varies, and it is small next to the others. On arc01 `classical`, `sort` and `vit` return MOTA 0.570 and IDF1 0.651 alike — the trackers genuinely agreed on that clip's identity assignment. Where they diverge, IDF1 separates them: GOTURN scores 0.493 against 0.651 on the same frames, with twice the ID switches.
 
-| tracker | sequence | MOTA | 95% CI | IDF1 | ID switches | MT / ML |
-|---|---|---|---|---|---|---|
-| `classical_det` | arc01 | 0.397 | [0.357, 0.434] | 0.641 | 8 | 7 / 0 |
-| `classical_det` | arc02 | 0.767 | [0.743, 0.791] | 0.856 | 5 | 7 / 1 |
-| `classical_det` | arc03 | 0.332 | [0.310, 0.355] | 0.660 | 6 | 9 / 0 |
-| `classical_det` | arc04 | 0.196 | [0.164, 0.227] | 0.466 | 13 | 2 / 1 |
-| `classical_det` | arc05 | 0.628 | [0.604, 0.648] | 0.750 | 7 | 10 / 3 |
-| `classical_det` | arc06 | 0.306 | [0.267, 0.347] | 0.475 | 24 | 5 / 6 |
-| `classical_det` | arc07 | 0.508 | [0.453, 0.553] | 0.560 | 10 | 5 / 0 |
-| `classical_det150` | arc01 | 0.570 | [0.542, 0.597] | 0.651 | 7 | 4 / 1 |
-| `classical_det150` | arc02 | 0.848 | [0.832, 0.864] | 0.907 | 1 | 6 / 0 |
-| `classical_det150` | arc05 | 0.673 | [0.649, 0.697] | 0.782 | 4 | 10 / 3 |
-| `goturn_det150` | arc01 | 0.557 | [0.529, 0.586] | 0.493 | 14 | 4 / 1 |
-| `goturn_det150` | arc02 | 0.838 | [0.821, 0.857] | 0.653 | 7 | 6 / 0 |
-| `goturn_det150` | arc05 | 0.658 | [0.635, 0.682] | 0.706 | 15 | 9 / 3 |
-| `sort_det` | arc01 | 0.398 | [0.357, 0.435] | 0.641 | 8 | 7 / 0 |
-| `sort_det` | arc02 | 0.769 | [0.747, 0.794] | 0.857 | 6 | 7 / 1 |
-| `sort_det` | arc03 | 0.330 | [0.308, 0.352] | 0.656 | 8 | 9 / 0 |
-| `sort_det` | arc04 | 0.197 | [0.165, 0.228] | 0.480 | 17 | 2 / 1 |
-| `sort_det` | arc05 | 0.639 | [0.617, 0.660] | 0.751 | 9 | 9 / 3 |
-| `sort_det` | arc06 | 0.310 | [0.272, 0.353] | 0.491 | 25 | 5 / 6 |
-| `sort_det` | arc07 | 0.522 | [0.468, 0.569] | 0.594 | 10 | 6 / 0 |
-| `sort_det150` | arc01 | 0.570 | [0.542, 0.597] | 0.651 | 7 | 4 / 1 |
-| `sort_det150` | arc02 | 0.846 | [0.829, 0.862] | 0.905 | 2 | 6 / 0 |
-| `sort_det150` | arc05 | 0.686 | [0.665, 0.707] | 0.782 | 6 | 9 / 3 |
-| `vit_det150` | arc01 | 0.570 | [0.542, 0.597] | 0.651 | 7 | 4 / 1 |
-| `vit_det150` | arc02 | 0.843 | [0.827, 0.860] | 0.745 | 5 | 6 / 0 |
-| `vit_det150` | arc05 | 0.661 | [0.637, 0.685] | 0.677 | 12 | 9 / 3 |
+| tracker | sequence | split | MOTA | 95% CI | IDF1 | ID switches | MT / ML |
+|---|---|---|---|---|---|---|---|
+| `classical_det` | arc01 | train | 0.397 | [0.357, 0.434] | 0.641 | 8 | 7 / 0 |
+| `classical_det` | arc02 | train | 0.767 | [0.743, 0.791] | 0.856 | 5 | 7 / 1 |
+| `classical_det` | arc03 | val | 0.332 | [0.310, 0.355] | 0.660 | 6 | 9 / 0 |
+| `classical_det` | arc04 | test | 0.196 | [0.164, 0.227] | 0.466 | 13 | 2 / 1 |
+| `classical_det` | arc05 | train | 0.628 | [0.604, 0.648] | 0.750 | 7 | 10 / 3 |
+| `classical_det` | arc06 | train | 0.306 | [0.267, 0.347] | 0.475 | 24 | 5 / 6 |
+| `classical_det` | arc07 | train | 0.508 | [0.453, 0.553] | 0.560 | 10 | 5 / 0 |
+| `classical_det150` | arc01 | train | 0.570 | [0.542, 0.597] | 0.651 | 7 | 4 / 1 |
+| `classical_det150` | arc02 | train | 0.848 | [0.832, 0.864] | 0.907 | 1 | 6 / 0 |
+| `classical_det150` | arc05 | train | 0.673 | [0.649, 0.697] | 0.782 | 4 | 10 / 3 |
+| `goturn_det150` | arc01 | train | 0.557 | [0.529, 0.586] | 0.493 | 14 | 4 / 1 |
+| `goturn_det150` | arc02 | train | 0.838 | [0.821, 0.857] | 0.653 | 7 | 6 / 0 |
+| `goturn_det150` | arc05 | train | 0.658 | [0.635, 0.682] | 0.706 | 15 | 9 / 3 |
+| `sort_det` | arc01 | train | 0.398 | [0.357, 0.435] | 0.641 | 8 | 7 / 0 |
+| `sort_det` | arc02 | train | 0.769 | [0.747, 0.794] | 0.857 | 6 | 7 / 1 |
+| `sort_det` | arc03 | val | 0.330 | [0.308, 0.352] | 0.656 | 8 | 9 / 0 |
+| `sort_det` | arc04 | test | 0.197 | [0.165, 0.228] | 0.480 | 17 | 2 / 1 |
+| `sort_det` | arc05 | train | 0.639 | [0.617, 0.660] | 0.751 | 9 | 9 / 3 |
+| `sort_det` | arc06 | train | 0.310 | [0.272, 0.353] | 0.491 | 25 | 5 / 6 |
+| `sort_det` | arc07 | train | 0.522 | [0.468, 0.569] | 0.594 | 10 | 6 / 0 |
+| `sort_det150` | arc01 | train | 0.570 | [0.542, 0.597] | 0.651 | 7 | 4 / 1 |
+| `sort_det150` | arc02 | train | 0.846 | [0.829, 0.862] | 0.905 | 2 | 6 / 0 |
+| `sort_det150` | arc05 | train | 0.686 | [0.665, 0.707] | 0.782 | 6 | 9 / 3 |
+| `vit_det150` | arc01 | train | 0.570 | [0.542, 0.597] | 0.651 | 7 | 4 / 1 |
+| `vit_det150` | arc02 | train | 0.843 | [0.827, 0.860] | 0.745 | 5 | 6 / 0 |
+| `vit_det150` | arc05 | train | 0.661 | [0.637, 0.685] | 0.677 | 12 | 9 / 3 |
 
 **Caveat.** Ground truth here was generated automatically (`scripts/auto_label.py`), because hand-labelling was not affordable within the project. Labels derived from motion association share their assumptions with SORT and the classical tracker and not with the appearance-based GOTURN and VitTrack, so this table is biased toward the former. The CPU table above needs no labels and is unaffected.
 
 Evaluation is detector-fed, not ground-truth-fed. Feeding trackers the reference boxes proved degenerate, and this was measured rather than assumed: on arc01 the classical tracker and SORT both scored MOTA 0.991651 — identical to six decimal places, which is not two trackers agreeing but one answer arrived at twice. Handed boxes that were themselves produced by association, a Kalman tracker returns the labeller's own tracks. Detector-fed asks a real question instead — how much an online tracker loses against an offline reference that saw the whole clip.
 
+**Split.** `data/tracking/assignment.csv` holds out arc03 for validation and arc04 for test — 5/1/1 over seven clips, 71.5/14.3/14.3 against the 70/15/15 the proposal specifies. It was generated after these results were produced, which would normally invalidate it. It is survivable here only because nothing was ever fitted: the Kalman trackers' parameters were hand-set and never swept, and GOTURN and VitTrack run frozen pretrained weights, so no tracker has seen a label in any way that could bias it. Every clip is therefore reported individually above rather than collapsed into a single test figure. What the split governs is what comes next — any tuning uses arc03, and arc04 stays untouched until the final report.
+
+Worth stating in the write-up: because no tracker is trained, the 70% train split is consumed by nothing. A ratio nearer 20/40/40 would put the same labelled frames into evaluation instead and tighten every interval here; `scripts/make_tracking_splits.py --ratio 20 40 40` produces it. The proposal's 70/15/15 is kept so the reported method matches the registered one.
+
 Rows ending `_det150` are the four-way head-to-head: all four trackers on the same 3 clips x 150 frames, fed by `yolo_960`. Rows ending `_det` are the broader 7-clip sample, which only `classical` and `sort` are cheap enough to run in full — GOTURN alone would need ~17 hours for it. Compare within a suffix, not across.
+
+## Why GOTURN was not fine-tuned
+
+CLAUDE.md permits light fine-tuning of GOTURN from pretrained weights and forbids training it from scratch. It was not fine-tuned at all, for two reasons, and the write-up should give both rather than leave the omission unexplained.
+
+1. **OpenCV exposes no way to do it.** GOTURN is consumed here through `cv2.TrackerGOTURN`, which loads a frozen Caffe model and offers `init` and `update` and nothing else. Fine-tuning would mean abandoning the OpenCV path and reimplementing the network and its training loop — precisely the semester-eating detour CLAUDE.md's trap list warns against.
+
+2. **No accuracy would rescue it.** GOTURN costs 3.5–4.3 s per frame in every pairing measured, and its cost scales with the number of targets rather than with image size: behind the classical detector's 13.3 tracks per frame it reaches 72 s per frame at 16 GiB of RSS. That is 0.01 FPS against a 30 FPS requirement. Accuracy is not the binding constraint, so improving it would not change the conclusion.
+
+It is also, separately, the least accurate of the four trackers on the head-to-head clips (IDF1 0.493 against 0.651 on arc01), so the decision costs the comparison nothing.
 
 ## Label quality (no ground truth exists, so this measures implausibility)
 

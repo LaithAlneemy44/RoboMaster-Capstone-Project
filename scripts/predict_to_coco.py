@@ -144,6 +144,29 @@ def load_ssd(weights: Path, imgsz: int, device: str, quiet: bool = False):
     return model, ckpt_imgsz
 
 
+def load_frcnn(weights: Path, imgsz: int, device: str, quiet: bool = False):
+    """Rebuild a Faster R-CNN from its checkpoint. Returns (model, checkpoint imgsz).
+
+    Preprocessing and box decoding are shared with SSD below, which is correct rather
+    than convenient: train_frcnn.py pins the model's internal transform to imgsz, so a
+    square imgsz input comes back with boxes in imgsz space - exactly the property
+    ssd_preprocess and ssd_out_to_dets already assume.
+    """
+    import torch
+
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from train_frcnn import build_frcnn  # noqa: PLC0415
+
+    ckpt = torch.load(weights, map_location="cpu", weights_only=False)
+    ckpt_imgsz = int(ckpt["imgsz"])
+    if ckpt_imgsz != imgsz and not quiet:
+        print(f"  note: --imgsz {imgsz} ignored; checkpoint was trained at {ckpt_imgsz}")
+    model = build_frcnn(ckpt["backbone"], ckpt_imgsz, ckpt["num_classes"])
+    model.load_state_dict(ckpt["model"])
+    model.eval().to(device)
+    return model, ckpt_imgsz
+
+
 def ssd_preprocess(image, ckpt_imgsz: int, device: str):
     """Decoded PIL image -> (input tensor, (sx, sy) native-rescale factors).
 
@@ -183,12 +206,13 @@ def ssd_out_to_dets(out, image_id: int, sx: float, sy: float, conf: float) -> li
 
 def predict_ssd(
     weights: Path, targets, name_to_cat: dict[str, int], imgsz: int, conf: float,
-    device: str, batch: int,
+    device: str, batch: int, loader=None,
 ) -> list[dict]:
+    """Batched torchvision-detector inference. `loader` selects the architecture."""
     import torch
     from PIL import Image
 
-    model, ckpt_imgsz = load_ssd(weights, imgsz, device)
+    model, ckpt_imgsz = (loader or load_ssd)(weights, imgsz, device)
 
     detections: list[dict] = []
     with torch.inference_mode():
@@ -207,6 +231,14 @@ def predict_ssd(
             print(f"\r  {min(start + batch, len(targets))}/{len(targets)} images", end="")
     print()
     return detections
+
+
+def predict_frcnn(
+    weights: Path, targets, name_to_cat: dict[str, int], imgsz: int, conf: float,
+    device: str, batch: int,
+) -> list[dict]:
+    return predict_ssd(weights, targets, name_to_cat, imgsz, conf, device, batch,
+                       loader=load_frcnn)
 
 
 def predict_classical(
@@ -277,7 +309,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--family", choices=("yolo", "ssd", "classical"), required=True)
+    parser.add_argument("--family", choices=("yolo", "ssd", "frcnn", "classical"),
+                        required=True)
     # Not required for classical: it has no trained weights, only a parameter set.
     parser.add_argument("--weights", type=Path)
     parser.add_argument("--config", help="Classical config name, e.g. strict.")
@@ -311,7 +344,8 @@ def main() -> None:
     if args.family == "classical":
         detections = predict_classical(args.config, targets, name_to_cat, args.conf)
     else:
-        predict = predict_yolo if args.family == "yolo" else predict_ssd
+        predict = {"yolo": predict_yolo, "ssd": predict_ssd,
+                   "frcnn": predict_frcnn}[args.family]
         detections = predict(
             args.weights, targets, name_to_cat, args.imgsz, args.conf,
             device, args.batch,

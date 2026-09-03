@@ -78,8 +78,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--detector", type=Path, default=DEFAULT_DETECTOR)
     parser.add_argument("--detector-config",
                         help="Classical detector config name, e.g. strict.")
-    parser.add_argument("--detector-family", choices=("yolo", "ssd", "classical"),
-                        default="yolo")
+    parser.add_argument("--detector-family",
+                        choices=("yolo", "ssd", "frcnn", "classical"), default="yolo")
     parser.add_argument("--imgsz", type=int, default=960)
     parser.add_argument("--conf", type=float, default=0.25)
     parser.add_argument("--cores", type=int, required=True,

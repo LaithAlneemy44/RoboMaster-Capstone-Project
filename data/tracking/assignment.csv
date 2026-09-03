@@ -1,0 +1,8 @@
+sequence,frames,split
+arc01,300,train
+arc02,301,train
+arc03,300,val
+arc04,300,test
+arc05,301,train
+arc06,301,train
+arc07,300,train

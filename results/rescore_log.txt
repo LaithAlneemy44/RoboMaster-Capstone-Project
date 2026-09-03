@@ -1,0 +1,16 @@
+predict classical_strict
+Score it:
+  python scripts/evaluate_detection.py --predictions results\predictions\classical_strict.json --name <config-name>
+predict classical_balanced
+Score it:
+  python scripts/evaluate_detection.py --predictions results\predictions\classical_balanced.json --name <config-name>
+predict classical_tight
+Score it:
+  python scripts/evaluate_detection.py --predictions results\predictions\classical_tight.json --name <config-name>
+predict classical_loose
+Score it:
+  python scripts/evaluate_detection.py --predictions results\predictions\classical_loose.json --name <config-name>
+predict classical_paired
+Score it:
+  python scripts/evaluate_detection.py --predictions results\predictions\classical_paired.json --name <config-name>
+predict ssd_small_960_groupnorm

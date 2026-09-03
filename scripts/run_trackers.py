@@ -155,17 +155,20 @@ def make_detector(family: str, weights, config: str, imgsz: int, conf: float,
         detector = ClassicalDetector(CONFIGS[config])
         return lambda frame: [box for box, _score, _cls in detector.detect(frame)]
 
-    if family == "ssd":
+    if family in ("ssd", "frcnn"):
         import numpy as np  # noqa: PLC0415
         import torch  # noqa: PLC0415
         from PIL import Image  # noqa: PLC0415
 
-        from predict_to_coco import load_ssd, ssd_preprocess  # noqa: PLC0415
+        from predict_to_coco import (  # noqa: PLC0415
+            load_frcnn, load_ssd, ssd_preprocess,
+        )
 
         # One SSD implementation, not two: the same loader and preprocessing that
         # produced the detection mAP numbers. A second copy here could drift and the
         # tracking rows would silently stop describing the model that was scored.
-        model, ckpt_imgsz = load_ssd(weights, imgsz, device, quiet=True)
+        load = load_ssd if family == "ssd" else load_frcnn
+        model, ckpt_imgsz = load(weights, imgsz, device, quiet=True)
 
         def detect(frame):
             image = Image.fromarray(np.ascontiguousarray(frame[:, :, ::-1]))
@@ -231,7 +234,8 @@ def parse_args() -> argparse.Namespace:
     source.add_argument("--detector", type=Path, help="YOLO weights for end-to-end.")
     source.add_argument("--detector-config",
                         help="Classical detector config name, e.g. strict.")
-    parser.add_argument("--detector-family", choices=("yolo", "ssd", "classical"),
+    parser.add_argument("--detector-family",
+                        choices=("yolo", "ssd", "frcnn", "classical"),
                         default="yolo")
     parser.add_argument("--gt", type=Path, default=None,
                         help="Ground-truth file, if not seq/gt/gt.txt.")

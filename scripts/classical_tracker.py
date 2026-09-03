@@ -2,8 +2,14 @@
 
 The classical arm of the tracking comparison, built rather than imported, per CLAUDE.md:
 kinematics to predict where a target is going, Kalman filtering to refine it, no
-training. Behaviour comes entirely from the parameters below, tuned on the validation
-split as proposal 5.3 describes.
+training. Behaviour comes entirely from the parameters below.
+
+THESE PARAMETERS WERE NOT TUNED. They were set by hand from the geometry of the problem
+- frame rate, typical robot speed, how long a robot stays occluded behind cover - and
+have not been changed since. No tuning sweep exists, so the reported numbers carry no
+tuning leakage; equally, no claim can be made that these values are optimal. If they are
+ever swept, scripts/make_tracking_split.py declares the val clip that the sweep must use,
+and test must stay untouched until the final report.
 
 HOW THIS DIFFERS FROM SORT, DELIBERATELY
     SORT is also Kalman plus association, so building this the obvious way would produce

@@ -194,16 +194,25 @@ def accumulate_ap(
     return overall, at50, by_class
 
 
-def best_f1(coco_eval, n_cat: int) -> tuple[float, np.ndarray]:
-    """Best F1 on the IoU=0.5 PR curve, per class and macro-averaged.
+def best_f1(coco_eval, n_cat: int):
+    """Best F1 on the IoU=0.5 PR curve, with the precision and recall that produced it.
 
-    mAP alone does not give an operating point, and the project's metric list asks
-    for precision, recall and F1. This reads them off the curve pycocotools already
-    computed rather than running a second, possibly inconsistent, matcher.
+    mAP alone does not give an operating point, and the project's metric list asks for
+    precision, recall and F1. This reads them off the curve pycocotools already computed
+    rather than running a second, possibly inconsistent, matcher.
+
+    Precision and recall are reported AT THE BEST-F1 POINT, not at a fixed confidence
+    threshold. A fixed threshold means different things to different models - a score of
+    0.25 is not comparable between YOLO and SSD - so it would make these columns
+    incomparable across exactly the models the table exists to compare.
+
+    Returns (macro F1, per-class F1, macro precision, macro recall).
     """
     precision = coco_eval.eval["precision"]  # [T, R, K, A, M]
     rec_thrs = coco_eval.params.recThrs
     per_class = np.full(n_cat, np.nan)
+    per_class_p = np.full(n_cat, np.nan)
+    per_class_r = np.full(n_cat, np.nan)
     for k in range(n_cat):
         pr = precision[0, :, k, 0, -1]
         valid = pr > -1
@@ -212,9 +221,70 @@ def best_f1(coco_eval, n_cat: int) -> tuple[float, np.ndarray]:
         p, r = pr[valid], rec_thrs[valid]
         with np.errstate(invalid="ignore", divide="ignore"):
             f1 = np.where((p + r) > 0, 2 * p * r / (p + r), 0.0)
-        per_class[k] = float(np.nanmax(f1))
-    macro = float(np.nanmean(per_class)) if not np.all(np.isnan(per_class)) else 0.0
-    return macro, per_class
+        best = int(np.nanargmax(f1))
+        per_class[k] = float(f1[best])
+        per_class_p[k] = float(p[best])
+        per_class_r[k] = float(r[best])
+
+    def macro(values):
+        return float(np.nanmean(values)) if not np.all(np.isnan(values)) else 0.0
+
+    return macro(per_class), per_class, macro(per_class_p), macro(per_class_r)
+
+
+def mean_tp_iou(scored_gt: dict, detections: list[dict], thresh: float = 0.5) -> float:
+    """Mean IoU of true-positive detections - localisation quality, not detection rate.
+
+    CLAUDE.md's metric list asks for IoU, and mAP does not answer it: a model can score
+    well on mAP while placing every box loosely, because mAP asks whether a box cleared
+    an IoU threshold, never by how much. This reports how tight the boxes that DID match
+    actually are, which is what matters when the box is what you aim at.
+
+    Matched greedily in score order against the ignore-policy-filtered ground truth - the
+    same detections and boxes the mAP above is computed from. Written out rather than
+    read from pycocotools internals: its `ious` matrices are indexed by an internal
+    re-sorting of the ground truth, and quietly mis-indexing them would produce a
+    plausible wrong number rather than an error.
+    """
+    gt_by_key: dict = {}
+    for ann in scored_gt["annotations"]:
+        if ann.get("iscrowd"):
+            continue
+        gt_by_key.setdefault((ann["image_id"], ann["category_id"]), []).append(ann["bbox"])
+
+    det_by_key: dict = {}
+    for det in detections:
+        det_by_key.setdefault((det["image_id"], det["category_id"]), []).append(det)
+
+    total, count = 0.0, 0
+    for key, dets in det_by_key.items():
+        gts = gt_by_key.get(key)
+        if not gts:
+            continue
+        taken = [False] * len(gts)
+        for det in sorted(dets, key=lambda d: -d["score"]):
+            dx1, dy1, dx2, dy2 = _xywh_to_xyxy(det["bbox"])
+            best_iou, best_index = 0.0, -1
+            for index, gt in enumerate(gts):
+                if taken[index]:
+                    continue
+                gx1, gy1, gx2, gy2 = _xywh_to_xyxy(gt)
+                ix1, iy1 = max(dx1, gx1), max(dy1, gy1)
+                ix2, iy2 = min(dx2, gx2), min(dy2, gy2)
+                iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
+                inter = iw * ih
+                if inter <= 0:
+                    continue
+                union = ((dx2 - dx1) * (dy2 - dy1)
+                         + (gx2 - gx1) * (gy2 - gy1) - inter)
+                iou = inter / union if union > 0 else 0.0
+                if iou > best_iou:
+                    best_iou, best_index = iou, index
+            if best_index >= 0 and best_iou >= thresh:
+                taken[best_index] = True
+                total += best_iou
+                count += 1
+    return total / count if count else float("nan")
 
 
 # --------------------------------------------------------------------------
@@ -324,8 +394,11 @@ def main() -> None:
             f"({m_all:.6f} vs {official:.6f}). Refusing to report bootstrap CIs."
         )
 
-    f1_macro, f1_class = best_f1(coco_eval, len(cat_ids))
+    f1_macro, f1_class, p_macro, r_macro = best_f1(coco_eval, len(cat_ids))
+    tp_iou = mean_tp_iou(scored_gt, kept)
 
+    print(f"precision {p_macro:.4f}   recall {r_macro:.4f}   "
+          f"mean TP IoU {tp_iou:.4f}   (best-F1 point, IoU>=0.5)")
     print(f"\n{'class':<12}{'AP@[.5:.95]':>13}{'bestF1@.5':>12}")
     for k, cid in enumerate(cat_ids):
         ap = by_class[k]
@@ -343,6 +416,12 @@ def main() -> None:
         "mAP_75": round(float(coco_eval.stats[2]), 6),
         "AR_100": round(float(coco_eval.stats[8]), 6),
         "best_f1_macro": round(f1_macro, 6),
+        # Precision and recall at the best-F1 operating point, plus how tight the boxes
+        # that matched actually are. All three are on the project's metric list and none
+        # is recoverable from mAP.
+        "precision_at_best_f1": round(p_macro, 6),
+        "recall_at_best_f1": round(r_macro, 6),
+        "mean_tp_iou": ("" if np.isnan(tp_iou) else round(float(tp_iou), 6)),
         "ci_low": "",
         "ci_high": "",
         "bootstrap_n": args.bootstrap,

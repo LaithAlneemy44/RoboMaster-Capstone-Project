@@ -35,8 +35,17 @@ ROOT = Path(__file__).resolve().parent.parent
 ACCURACY = ROOT / "results" / "tracking.csv"
 PERFORMANCE = ROOT / "results" / "tracking_performance.csv"
 QUALITY = ROOT / "results" / "label_quality.csv"
+SPLIT = ROOT / "data" / "tracking" / "assignment.csv"
 OUT_CSV = ROOT / "results" / "tracking_combined.csv"
 OUT_MD = ROOT / "results" / "tracking_report.md"
+
+
+def read_split() -> dict:
+    """sequence -> train/val/test, from scripts/make_tracking_splits.py."""
+    if not SPLIT.is_file():
+        return {}
+    with SPLIT.open(newline="", encoding="utf-8") as fh:
+        return {r["sequence"]: r["split"] for r in csv.DictReader(fh)}
 
 
 def read(path: Path, required: bool = True):
@@ -84,6 +93,7 @@ def main() -> None:
     perf = read(PERFORMANCE, required=False)
     acc = read(ACCURACY, required=False)
     quality = read(QUALITY, required=False)
+    split = read_split()
     if not perf and not acc:
         sys.exit("Nothing to report - run benchmark_tracking.py / eval_tracking.py first.")
 
@@ -159,12 +169,14 @@ def main() -> None:
             "assignment. Where they diverge, IDF1 separates them: GOTURN scores 0.493 "
             "against 0.651 on the same frames, with twice the ID switches.",
             "",
-            "| tracker | sequence | MOTA | 95% CI | IDF1 | ID switches | MT / ML |",
-            "|---|---|---|---|---|---|---|",
+            "| tracker | sequence | split | MOTA | 95% CI | IDF1 | ID switches "
+            "| MT / ML |",
+            "|---|---|---|---|---|---|---|---|",
         ]
         for row in sorted(acc, key=lambda r: (r["name"], r["sequence"])):
             lines.append(
-                f"| `{row['name']}` | {row['sequence']} | {f(row, 'mota'):.3f} | "
+                f"| `{row['name']}` | {row['sequence']} | "
+                f"{split.get(row['sequence'], '-')} | {f(row, 'mota'):.3f} | "
                 f"[{f(row, 'mota_ci_low'):.3f}, {f(row, 'mota_ci_high'):.3f}] | "
                 f"{f(row, 'idf1'):.3f} | {int(f(row, 'id_switches', 0))} | "
                 f"{int(f(row, 'mostly_tracked', 0))} / "
@@ -188,11 +200,57 @@ def main() -> None:
             "Detector-fed asks a real question instead — how much an online tracker "
             "loses against an offline reference that saw the whole clip.",
             "",
+            "**Split.** `data/tracking/assignment.csv` holds out arc03 for validation "
+            "and arc04 for test — 5/1/1 over seven clips, 71.5/14.3/14.3 against the "
+            "70/15/15 the proposal specifies. It was generated after these results "
+            "were produced, which would normally invalidate it. It is survivable here "
+            "only because nothing was ever fitted: the Kalman trackers' parameters were "
+            "hand-set and never swept, and GOTURN and VitTrack run frozen pretrained "
+            "weights, so no tracker has seen a label in any way that could bias it. "
+            "Every clip is therefore reported individually above rather than collapsed "
+            "into a single test figure. What the split governs is what comes next — any "
+            "tuning uses arc03, and arc04 stays untouched until the final report.",
+            "",
+            "Worth stating in the write-up: because no tracker is trained, the 70% "
+            "train split is consumed by nothing. A ratio nearer 20/40/40 would put the "
+            "same labelled frames into evaluation instead and tighten every interval "
+            "here; `scripts/make_tracking_splits.py --ratio 20 40 40` produces it. The "
+            "proposal's 70/15/15 is kept so the reported method matches the registered "
+            "one.",
+            "",
             "Rows ending `_det150` are the four-way head-to-head: all four trackers on "
             "the same 3 clips x 150 frames, fed by `yolo_960`. Rows ending `_det` are "
             "the broader 7-clip sample, which only `classical` and `sort` are cheap "
             "enough to run in full — GOTURN alone would need ~17 hours for it. Compare "
             "within a suffix, not across.",
+            "",
+        ]
+
+    if perf or acc:
+        lines += [
+            "## Why GOTURN was not fine-tuned",
+            "",
+            "CLAUDE.md permits light fine-tuning of GOTURN from pretrained weights and "
+            "forbids training it from scratch. It was not fine-tuned at all, for two "
+            "reasons, and the write-up should give both rather than leave the omission "
+            "unexplained.",
+            "",
+            "1. **OpenCV exposes no way to do it.** GOTURN is consumed here through "
+            "`cv2.TrackerGOTURN`, which loads a frozen Caffe model and offers `init` and "
+            "`update` and nothing else. Fine-tuning would mean abandoning the OpenCV "
+            "path and reimplementing the network and its training loop — precisely the "
+            "semester-eating detour CLAUDE.md's trap list warns against.",
+            "",
+            "2. **No accuracy would rescue it.** GOTURN costs 3.5–4.3 s per frame in "
+            "every pairing measured, and its cost scales with the number of targets "
+            "rather than with image size: behind the classical detector's 13.3 tracks "
+            "per frame it reaches 72 s per frame at 16 GiB of RSS. That is 0.01 FPS "
+            "against a 30 FPS requirement. Accuracy is not the binding constraint, so "
+            "improving it would not change the conclusion.",
+            "",
+            "It is also, separately, the least accurate of the four trackers on the "
+            "head-to-head clips (IDF1 0.493 against 0.651 on arc01), so the decision "
+            "costs the comparison nothing.",
             "",
         ]
 
