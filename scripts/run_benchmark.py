@@ -47,7 +47,18 @@ from run_sweep import CONFIGS, config_name, weights_path  # noqa: E402
 # The classical detector has no trained weights - a config IS the model - so it is
 # listed separately rather than squeezed into run_sweep's (family, variant, imgsz)
 # tuple. Only the configs actually scored in detection.csv are benchmarked.
-CLASSICAL_CONFIGS = ("strict", "balanced", "tight", "loose")
+CLASSICAL_CONFIGS = ("strict", "balanced", "tight", "loose", "paired")
+
+# SSD variants that post-date the original sweep and are not in run_sweep.CONFIGS:
+# the corrected-anchor ladder (min_ratio 0.05, which doubled SSD mAP) and the
+# GroupNorm run. Listed by checkpoint directory since they share run_sweep's
+# runs/ssd/<name>/best.pt layout but not its (family, variant, imgsz) naming.
+EXTRA_SSD = (
+    ("ssd_small_320_anchor", 320), ("ssd_large_320_anchor", 320),
+    ("ssd_small_640_anchor", 640), ("ssd_large_640_anchor", 640),
+    ("ssd_small_960_anchor", 960), ("ssd_large_960_anchor", 960),
+    ("ssd_small_960_groupnorm", 960),
+)
 
 # Levels are (physical cores, use hyperthread siblings). Counted in PHYSICAL cores
 # because siblings share execution resources - see core_ids() in benchmark_cpu.py, where
@@ -158,6 +169,20 @@ def main() -> None:
         for cores, smt in levels:
             if (name, cores, smt) not in done:
                 cells.append((name, family, imgsz, weights, cores, smt))
+
+    for name, imgsz in EXTRA_SSD:
+        if args.only and name not in args.only:
+            continue
+        # ssd_small_960_groupnorm is stored under a different directory name
+        # than its results row, so the path is derived rather than assumed.
+        run = name.replace("_groupnorm", "_gn")
+        weights = ROOT / "runs" / "ssd" / run / "best.pt"
+        if not weights.is_file():
+            print(f"skip {name}: no weights at {weights}")
+            continue
+        for cores, smt in levels:
+            if (name, cores, smt) not in done:
+                cells.append((name, "ssd", imgsz, weights, cores, smt))
 
     for cfg in CLASSICAL_CONFIGS:
         name = f"classical_{cfg}"

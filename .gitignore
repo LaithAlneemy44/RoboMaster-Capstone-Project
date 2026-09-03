@@ -307,3 +307,8 @@ data/tracking/*/img1/
 .vscode/
 # Ad-hoc backups; the CSV itself is committed
 results/*.csv.bak
+
+# Driver run logs. Regenerable by re-running scripts/run_matrix.py or
+# scripts/run_headtohead.sh, and they interleave subprocess output rather than
+# recording anything the results CSVs do not already hold.
+results/chain_log.txt

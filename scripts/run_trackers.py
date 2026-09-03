@@ -137,6 +137,76 @@ class CvMultiTracker:
                 if e[4] >= self.min_hits and e[3] == 0]
 
 
+def make_detector(family: str, weights, config: str, imgsz: int, conf: float,
+                  device: str):
+    """Return frame -> [(x, y, w, h)] for either detector family.
+
+    The proposal compares perception models, meaning every detector paired with every
+    tracker - so the classical detector has to be drivable here too, not just YOLO. It
+    has no weights file (a config IS the model), which is the same split
+    predict_to_coco.py already handles by dispatching on --family.
+    """
+    if family == "classical":
+        from classical_detector import CONFIGS, ClassicalDetector  # noqa: PLC0415
+
+        if config not in CONFIGS:
+            sys.exit(f"Unknown classical config {config!r}. "
+                     f"Choose from: {', '.join(sorted(CONFIGS))}")
+        detector = ClassicalDetector(CONFIGS[config])
+        return lambda frame: [box for box, _score, _cls in detector.detect(frame)]
+
+    if family == "ssd":
+        import numpy as np  # noqa: PLC0415
+        import torch  # noqa: PLC0415
+        from PIL import Image  # noqa: PLC0415
+
+        from predict_to_coco import load_ssd, ssd_preprocess  # noqa: PLC0415
+
+        # One SSD implementation, not two: the same loader and preprocessing that
+        # produced the detection mAP numbers. A second copy here could drift and the
+        # tracking rows would silently stop describing the model that was scored.
+        model, ckpt_imgsz = load_ssd(weights, imgsz, device, quiet=True)
+
+        def detect(frame):
+            image = Image.fromarray(np.ascontiguousarray(frame[:, :, ::-1]))
+            tensor, (sx, sy) = ssd_preprocess(image, ckpt_imgsz, device)
+            with torch.no_grad():
+                out = model([tensor])[0]
+            boxes = []
+            for box, label, score in zip(out["boxes"].cpu(), out["labels"].cpu(),
+                                         out["scores"].cpu()):
+                # Category 3 is "car" in the COCO export; see data/splits/coco_val.json.
+                # Same class filter as the YOLO branch, for the same reason: the
+                # tracking ground truth only ever contains robots.
+                if int(label) != 3 or float(score) < conf:
+                    continue
+                x1, y1, x2, y2 = (float(v) for v in box)
+                boxes.append((x1 * sx, y1 * sy, (x2 - x1) * sx, (y2 - y1) * sy))
+            return boxes
+
+        return detect
+
+    from ultralytics import YOLO  # noqa: PLC0415
+
+    model = YOLO(str(weights))
+    names = dict(model.names.items())
+
+    def detect(frame):
+        result = model.predict(frame, imgsz=imgsz, conf=conf, device=device,
+                               verbose=False)[0]
+        out = []
+        for box in result.boxes:
+            # "car" only: the tracking ground truth tracks robots, so any other class
+            # would be a target the reference never contains.
+            if names[int(box.cls[0])] != "car":
+                continue
+            x1, y1, x2, y2 = (float(v) for v in box.xyxy[0])
+            out.append((x1, y1, x2 - x1, y2 - y1))
+        return out
+
+    return detect
+
+
 def build(kind: str):
     if kind == "classical":
         from classical_tracker import ClassicalTracker  # noqa: PLC0415
@@ -159,6 +229,10 @@ def parse_args() -> argparse.Namespace:
     source.add_argument("--gt-fed", action="store_true",
                         help="Feed ground-truth boxes. The primary protocol.")
     source.add_argument("--detector", type=Path, help="YOLO weights for end-to-end.")
+    source.add_argument("--detector-config",
+                        help="Classical detector config name, e.g. strict.")
+    parser.add_argument("--detector-family", choices=("yolo", "ssd", "classical"),
+                        default="yolo")
     parser.add_argument("--gt", type=Path, default=None,
                         help="Ground-truth file, if not seq/gt/gt.txt.")
     parser.add_argument("--imgsz", type=int, default=960)
@@ -184,22 +258,23 @@ def main() -> None:
         sys.exit(f"No frames in {args.seq / info['imDir']}")
 
     gt = read_gt(args.seq, args.gt) if args.gt_fed else None
-    model = None
-    if args.detector:
-        from ultralytics import YOLO  # noqa: PLC0415
-
-        model = YOLO(str(args.detector))
+    detect = None
+    if args.detector or args.detector_config:
+        detect = make_detector(args.detector_family, args.detector,
+                               args.detector_config, args.imgsz, args.conf,
+                               args.device)
 
     box_median = 120.0
     clean_frame = None
-    if args.detector and not args.raw_boxes:
+    if (args.detector or args.detector_config) and not args.raw_boxes:
         from auto_label import clean_frame  # noqa: PLC0415
         # Same size envelope the labeller used, derived from the frame width so
         # it tracks the sequence rather than being hardcoded per clip.
         box_median = float(info.get("imWidth", 1280)) / 11.0
 
     tracker, needs_frame = build(args.tracker)
-    mode = "gt-fed" if args.gt_fed else f"detector={args.detector.name}"
+    mode = ("gt-fed" if args.gt_fed else
+            f"detector={args.detector_config or args.detector.name}")
     print(f"sequence : {args.seq.name}  ({len(images)} frames)")
     print(f"tracker  : {args.tracker}   input: {mode}")
 
@@ -213,12 +288,7 @@ def main() -> None:
         if gt is not None:
             detections = gt.get(frame_no, [])
         else:
-            result = model.predict(str(path), imgsz=args.imgsz, conf=args.conf,
-                                   device=args.device, verbose=False)[0]
-            detections = []
-            for box in result.boxes:
-                x1, y1, x2, y2 = (float(v) for v in box.xyxy[0])
-                detections.append((x1, y1, x2 - x1, y2 - y1))
+            detections = detect(frame)
             if not args.raw_boxes:
                 # The reference was built from CLEANED detections, so a tracker fed
                 # raw ones is scored against a different world: on arc04 that gave
@@ -237,7 +307,8 @@ def main() -> None:
 
     out_dir = args.out or (DEFAULT_OUT / args.seq.name)
     out_dir.mkdir(parents=True, exist_ok=True)
-    suffix = "gt" if args.gt_fed else "det"
+    suffix = ("gt" if args.gt_fed else
+              ("det" if args.detector_family == "yolo" else "detcls"))
     out_path = out_dir / f"{args.tracker}_{suffix}.txt"
     out_path.write_text("\n".join(rows) + "\n", encoding="utf-8")
 

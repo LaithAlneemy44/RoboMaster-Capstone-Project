@@ -55,11 +55,19 @@ def f(row, key, default=float("nan")):
         return default
 
 
-def mean_by_tracker(rows, keys):
-    """Average across sequences, so a tracker gets one row per core level."""
+def mean_by_pairing(rows, keys):
+    """Average across sequences, so each perception model gets one row per core level.
+
+    Keyed by DETECTOR AND TRACKER, not tracker alone. Proposal 5.2 compares perception
+    models - a detector paired with a tracker - and averaging the detector axis away
+    would blend yolo_960 with the classical detector into a number describing neither.
+    With a single detector present this reads exactly as a tracker-only table.
+    """
     grouped = collections.defaultdict(list)
     for row in rows:
-        grouped[(row["tracker"], int(row["cores"]), int(row.get("smt", 0)))].append(row)
+        key = (row.get("detector", "?"), row["tracker"],
+               int(row["cores"]), int(row.get("smt", 0)))
+        grouped[key].append(row)
     out = {}
     for key, group in grouped.items():
         out[key] = {k: statistics.fmean([f(r, k) for r in group]) for k in keys}
@@ -84,35 +92,72 @@ def main() -> None:
     if perf:
         keys = ["detect_ms", "track_ms", "total_ms", "fps", "track_share",
                 "tracks_in_flight", "cpu_pct_of_cap", "rss_peak_mib"]
-        summary = mean_by_tracker(perf, keys)
+        summary = mean_by_pairing(perf, keys)
         lines += [
-            "## CPU cost (the headline — needs no labels)",
+            "## CPU cost of each perception model (the headline — needs no labels)",
             "",
-            f"Averaged over sequences. `RT` marks >= {args.fps_target:g} FPS. "
-            "`track %` is the tracker's share of the detector+tracker pipeline.",
+            "One row per detector+tracker pairing, averaged over sequences. "
+            f"`RT` marks >= {args.fps_target:g} FPS. `track %` is the tracker's share of "
+            "the pipeline: a tracker that is cheap beside its detector is a completely "
+            "different deployment proposition from one that dominates the frame budget.",
             "",
-            "| cores | tracker | detect ms | track ms | total ms | FPS | RT | track % "
-            "| tracks/frame | CPU% of cap | RAM MiB |",
-            "|---|---|---|---|---|---|---|---|---|---|---|",
+            "| cores | detector | tracker | detect ms | track ms | total ms | FPS | RT "
+            "| track % | tracks/frame | CPU% of cap | RAM MiB |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|",
         ]
-        for (tracker, cores, smt), row in sorted(
-            summary.items(), key=lambda kv: (kv[0][1], kv[0][2], -kv[1]["fps"])
+        shown = []
+        for (detector, tracker, cores, smt), row in sorted(
+            summary.items(), key=lambda kv: (kv[0][2], kv[0][3], -kv[1]["fps"])
         ):
             if args.cores is not None and cores != args.cores:
                 continue
             label = f"{cores}{'+SMT' if smt else ''}"
             rt = "OK" if row["fps"] >= args.fps_target else ""
+            shown.append((cores, smt, detector, tracker, row))
             lines.append(
-                f"| {label} | `{tracker}` | {row['detect_ms']:.1f} | "
+                f"| {label} | `{detector}` | `{tracker}` | {row['detect_ms']:.1f} | "
                 f"{row['track_ms']:.1f} | {row['total_ms']:.1f} | {row['fps']:.1f} | "
                 f"{rt} | {row['track_share']:.0%} | {row['tracks_in_flight']:.1f} | "
                 f"{row['cpu_pct_of_cap']:.0f} | {row['rss_peak_mib']:.0f} |"
             )
         lines.append("")
 
+        # The fastest pairing per core level, stated rather than left to be read off the
+        # table - this is the deployment answer the research question asks for.
+        best, pool = {}, collections.Counter()
+        for cores, smt, detector, tracker, row in shown:
+            key = (cores, smt)
+            pool[key] += 1
+            if key not in best or row["fps"] > best[key][2]["fps"]:
+                best[key] = (detector, tracker, row)
+        if best:
+            lines.append("Fastest pairing at each core level:")
+            lines.append("")
+            for (cores, smt), (detector, tracker, row) in sorted(best.items()):
+                label = f"{cores}{'+SMT' if smt else ''}"
+                # The count matters. The full detector x tracker matrix was run at 1 and
+                # 6 cores only; the intermediate levels carry the earlier sweep's single
+                # detector. Without this, "fastest" would read as a claim over the whole
+                # grid at every level rather than over whatever was measured there.
+                lines.append(
+                    f"- **{label} core(s)** — `{detector}` + `{tracker}`, "
+                    f"{row['total_ms']:.1f} ms ({row['fps']:.1f} FPS) "
+                    f"— best of {pool[(cores, smt)]} pairings measured at this level"
+                )
+            lines.append("")
+
     if acc:
         lines += [
             "## Accuracy (secondary — see the caveat below)",
+            "",
+            "**Read IDF1 and ID switches, not MOTA.** Every tracker in a given row "
+            "group is fed by the same detector, and MOTA is dominated by that "
+            "detector's misses and false positives, which are therefore identical "
+            "across trackers; only the ID-switch term varies, and it is small next to "
+            "the others. On arc01 `classical`, `sort` and `vit` return MOTA 0.570 and "
+            "IDF1 0.651 alike — the trackers genuinely agreed on that clip's identity "
+            "assignment. Where they diverge, IDF1 separates them: GOTURN scores 0.493 "
+            "against 0.651 on the same frames, with twice the ID switches.",
             "",
             "| tracker | sequence | MOTA | 95% CI | IDF1 | ID switches | MT / ML |",
             "|---|---|---|---|---|---|---|",
@@ -135,10 +180,19 @@ def main() -> None:
             "table above needs no labels and is unaffected.",
             "",
             "Evaluation is detector-fed, not ground-truth-fed. Feeding trackers the "
-            "reference boxes proved degenerate: they returned the labeller's own tracks "
-            "and scored ~0.99 MOTA regardless of which tracker ran. Detector-fed asks a "
-            "real question instead — how much an online tracker loses against an offline "
-            "reference that saw the whole clip.",
+            "reference boxes proved degenerate, and this was measured rather than "
+            "assumed: on arc01 the classical tracker and SORT both scored MOTA 0.991651 "
+            "— identical to six decimal places, which is not two trackers agreeing but "
+            "one answer arrived at twice. Handed boxes that were themselves produced by "
+            "association, a Kalman tracker returns the labeller's own tracks. "
+            "Detector-fed asks a real question instead — how much an online tracker "
+            "loses against an offline reference that saw the whole clip.",
+            "",
+            "Rows ending `_det150` are the four-way head-to-head: all four trackers on "
+            "the same 3 clips x 150 frames, fed by `yolo_960`. Rows ending `_det` are "
+            "the broader 7-clip sample, which only `classical` and `sort` are cheap "
+            "enough to run in full — GOTURN alone would need ~17 hours for it. Compare "
+            "within a suffix, not across.",
             "",
         ]
 

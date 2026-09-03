@@ -95,6 +95,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gt", type=Path, default=None, help="Defaults to seq/gt/gt.txt")
     parser.add_argument("--iou", type=float, default=0.5,
                         help="Distance threshold for a match.")
+    parser.add_argument("--max-frame", type=int, default=0,
+                        help="Score only frames up to this index, truncating "
+                             "ground truth to match. 0 = whole clip.")
     parser.add_argument("--bootstrap", type=int, default=1000)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--csv", type=Path, default=DEFAULT_CSV)
@@ -109,6 +112,14 @@ def main() -> None:
     gt_path = args.gt or (args.seq / "gt" / "gt.txt")
     gt = load_mot(gt_path, "ground truth")
     res = load_mot(args.results, "results")
+
+    if args.max_frame:
+        # GOTURN costs ~4.2 s/frame, so the four-way head-to-head runs a frame subset.
+        # Ground truth must be truncated to the SAME range or every unrun frame counts
+        # as a miss and MOTA collapses for reasons that have nothing to do with the
+        # tracker.
+        gt = gt[gt.index.get_level_values("FrameId") <= args.max_frame]
+        res = res[res.index.get_level_values("FrameId") <= args.max_frame]
 
     acc = mm.utils.compare_to_groundtruth(gt, res, "iou", distth=args.iou)
     metrics = ["mota", "motp", "idf1", "num_switches", "num_false_positives",
@@ -150,6 +161,7 @@ def main() -> None:
         "mostly_tracked": int(got["mostly_tracked"]),
         "mostly_lost": int(got["mostly_lost"]),
         "iou_thresh": args.iou,
+        "max_frame": args.max_frame,
         "bootstrap_n": args.bootstrap,
     }
     args.csv.parent.mkdir(parents=True, exist_ok=True)

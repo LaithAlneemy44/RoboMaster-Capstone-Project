@@ -54,6 +54,20 @@ DEFAULT_DETECTOR = ROOT / "runs" / "detect" / "yolo_960" / "weights" / "best.pt"
 WARMUP = 3
 
 
+def detector_label(args) -> str:
+    """The config name, from whichever layout that family stores weights in.
+
+    YOLO keeps runs/detect/<name>/weights/best.pt; SSD keeps runs/ssd/<name>/best.pt;
+    the classical detector has no weights at all. Taking a fixed number of parents
+    would label every SSD row "ssd".
+    """
+    if args.detector_family == "classical":
+        return args.detector_config
+    if args.detector.parent.name == "weights":
+        return args.detector.parent.parent.name
+    return args.detector.parent.name
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -62,6 +76,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tracker", choices=("classical", "sort", "goturn", "vit"),
                         required=True)
     parser.add_argument("--detector", type=Path, default=DEFAULT_DETECTOR)
+    parser.add_argument("--detector-config",
+                        help="Classical detector config name, e.g. strict.")
+    parser.add_argument("--detector-family", choices=("yolo", "ssd", "classical"),
+                        default="yolo")
     parser.add_argument("--imgsz", type=int, default=960)
     parser.add_argument("--conf", type=float, default=0.25)
     parser.add_argument("--cores", type=int, required=True,
@@ -82,12 +100,11 @@ def main() -> None:
 
     import cv2
     import torch
-    from ultralytics import YOLO
 
     torch.set_num_threads(len(affinity))
 
     from auto_label import clean_frame  # noqa: PLC0415
-    from run_trackers import build, read_seqinfo  # noqa: PLC0415
+    from run_trackers import build, make_detector, read_seqinfo  # noqa: PLC0415
 
     info = read_seqinfo(args.seq)
     images = sorted((args.seq / info["imDir"]).glob("*" + info["imExt"]))
@@ -96,30 +113,25 @@ def main() -> None:
     if not images:
         sys.exit(f"No frames in {args.seq / info['imDir']}")
 
-    model = YOLO(str(args.detector))
-    names = dict(model.names.items())
+    # Shared with run_trackers.py so the timed pipeline is the one that produced the
+    # accuracy numbers, not a second implementation that merely resembles it.
+    detect_raw = make_detector(args.detector_family, args.detector,
+                               args.detector_config, args.imgsz, args.conf, "cpu")
     tracker, needs_frame = build(args.tracker)
     box_median = float(info.get("imWidth", 1280)) / 11.0
 
     print(f"sequence : {args.seq.name}   tracker: {args.tracker}")
-    print(f"detector : {args.detector.name} at {args.imgsz}px")
+    label = detector_label(args)
+    print(f"detector : {label} ({args.detector_family}) at {args.imgsz}px")
     print(f"cores    : {args.cores} physical{' +SMT' if args.smt else ''} "
           f"(affinity {affinity})")
     print(f"frames   : {len(images)} (+{WARMUP} warmup)   device: cpu")
     baseline = check_machine_idle()
 
     def detect(frame):
-        result = model.predict(frame, imgsz=args.imgsz, conf=args.conf, device="cpu",
-                               verbose=False)[0]
-        boxes = []
-        for box in result.boxes:
-            if names[int(box.cls[0])] != "car":
-                continue
-            x1, y1, x2, y2 = (float(v) for v in box.xyxy[0])
-            boxes.append((x1, y1, x2 - x1, y2 - y1))
         # Matches what the labeller and run_trackers.py feed the trackers, so the timing
         # corresponds to the pipeline that produced the accuracy numbers.
-        return clean_frame(boxes, median=box_median)
+        return clean_frame(detect_raw(frame), median=box_median)
 
     for path in images[:WARMUP]:
         frame = cv2.imread(str(path))
@@ -153,7 +165,7 @@ def main() -> None:
     row = {
         "sequence": args.seq.name,
         "tracker": args.tracker,
-        "detector": args.detector.parent.parent.name,
+        "detector": detector_label(args),
         "cores": args.cores,
         "smt": int(args.smt),
         "logical_cpus": len(affinity),
