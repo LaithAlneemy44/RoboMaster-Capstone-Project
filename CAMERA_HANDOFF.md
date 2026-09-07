@@ -375,11 +375,30 @@ On a lower-power board these numbers will be **worse**, likely substantially.
    were also **never tuned** — hand-set from problem geometry, no sweep was ever run.
    `data/tracking/assignment.csv` reserves arc03 for validation if you tune them.
 
-6. **Armor detection fails outside the YOLO family.** SSD (0.093), Faster R-CNN (0.011)
-   and the classical detector (0.011) are all effectively blind to armor plates at ~21 px.
-   Three independent architectures failing the same way suggests a target-size problem,
-   not a model problem. If the hardware phase needs armor-level targeting, the model
-   choice is constrained to YOLO/Fast YOLO at ≥640 input.
+6. **Armor detection fails outside the YOLO family — and the cause is now known.** It is
+   an *anchor floor*, not an inherent small-object limit. Every anchor-based detector here
+   has its smallest prior far larger than an armor plate (median 25 x 22 px native):
+
+   | model | smallest prior | armor at that input |
+   |---|---|---|
+   | SSD `min_ratio` 0.2 @960 | 192 px | 12.7 x 19.2 |
+   | SSD `min_ratio` 0.05 @960 | 48 px | 12.7 x 19.2 |
+   | Faster R-CNN RPN @640 | 32 px | 8.4 x 12.8 |
+   | YOLOv11 | **anchor-free**, stride 8 | 12.7 x 10.8 |
+
+   Tested by retraining SSD at `min_ratio` 0.015 (14.4 px floor). Armor AP rose
+   **0.0930 → 0.2523, a factor of 2.7**, confirming the mechanism. But overall mAP fell
+   0.5137 → 0.4363, because `base` dropped 0.7852 → 0.4149 and `watcher` 0.5584 → 0.4635.
+
+   **That trade is the real finding.** No single anchor scale serves both a 22 px armor
+   plate and a large base; an anchor-based detector must choose, and this dataset spans
+   both. The anchor-free architecture does not have to choose, which is why `fast_960`
+   holds armor AP 0.4537 *and* the second-best overall mAP simultaneously.
+
+   **Guidance is unchanged:** for armor-level targeting, use YOLO/Fast YOLO at ≥640.
+   `ssd_small_960_tiny` at 0.2523 still trails even `fast_640` (0.2943). The equivalent
+   Faster R-CNN test (RPN floor 32 → 8 px) is running; it will not change this
+   recommendation, since Faster R-CNN is already disqualified on latency at 0.45 FPS.
 
 7. **Tracking ground truth is machine-generated** (`scripts/auto_label.py`), not
    hand-labelled. Its labels come from motion association, which shares assumptions with
