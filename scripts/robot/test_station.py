@@ -24,7 +24,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "scripts" / "robot"))
 
 import numpy as np  # noqa: E402
-from PySide6 import QtCore, QtWidgets  # noqa: E402
+from PySide6 import QtCore, QtGui, QtWidgets  # noqa: E402
 
 import protocol  # noqa: E402
 from driver import MockDriver  # noqa: E402
@@ -96,11 +96,11 @@ def check_turret_and_fire(app) -> None:
     window.fire()
     assert any(l.startswith("FIRE") for l in driver.log), "armed, it should fire"
 
-    window._keys.add(QtCore.Qt.Key_Left)
+    window._keys.add(QtCore.Qt.Key_J)
     driver.log.clear()
     window._tick_control()
     yaw = float([l for l in driver.log if l.startswith("GIM")][-1].split()[2])
-    assert yaw < 0, f"left arrow should yaw negative, got {yaw}"
+    assert yaw < 0, f"J should yaw the turret negative, got {yaw}"
     window.close()
     print("       ok")
 
@@ -269,12 +269,127 @@ def check_mode_banner(app) -> None:
     print("       ok")
 
 
+def check_tuning_controls(app) -> None:
+    print("[test] tuning controls actually change behaviour, not just the display")
+    window, driver = _window(app)
+    _link_up(window)
+
+    # Drive speed must reach the wire.
+    window.tuning_widgets["drive speed"].setValue(0.20)
+    window._keys.add(QtCore.Qt.Key_W)
+    driver.log.clear()
+    window._tick_control()
+    slow = float([l for l in driver.log if l.startswith("DRV")][-1].split()[1])
+    window.tuning_widgets["drive speed"].setValue(0.90)
+    driver.log.clear()
+    window._tick_control()
+    fast = float([l for l in driver.log if l.startswith("DRV")][-1].split()[1])
+    assert fast > slow, f"raising drive speed must raise demand: {slow} -> {fast}"
+    window._keys.clear()
+
+    # Turret speed likewise.
+    window.tuning_widgets["turret speed"].setValue(0.15)
+    window._keys.add(QtCore.Qt.Key_L)
+    driver.log.clear()
+    window._tick_control()
+    slow_yaw = float([l for l in driver.log if l.startswith("GIM")][-1].split()[2])
+    window.tuning_widgets["turret speed"].setValue(0.80)
+    driver.log.clear()
+    window._tick_control()
+    fast_yaw = float([l for l in driver.log if l.startswith("GIM")][-1].split()[2])
+    assert fast_yaw > slow_yaw, (slow_yaw, fast_yaw)
+    window._keys.clear()
+
+    # Aim gain must reach the controller, and the spinbox must be wired to the same
+    # AimConfig instance the controller uses - a copy would look right and do nothing.
+    window.tuning_widgets["aim gain yaw"].setValue(2.5)
+    assert window.aim.config.gain_yaw == 2.5, window.aim.config.gain_yaw
+    window.tuning_widgets["aim deadband"].setValue(0.0)
+    window.tuning_widgets["aim max rate"].setValue(1.0)
+    frame = np.zeros((FRAME[1], FRAME[0], 3), dtype=np.uint8)
+    window.btn_track.setChecked(True)
+    window.aim.reset()
+    window._on_frame(frame, [(1, (1500.0, 520.0, 40.0, 40.0))], 12.0)
+    _, high_gain = window._aim_demand
+
+    window.tuning_widgets["aim gain yaw"].setValue(0.5)
+    window.aim.reset()
+    window._on_frame(frame, [(1, (1500.0, 520.0, 40.0, 40.0))], 12.0)
+    _, low_gain = window._aim_demand
+    assert high_gain > low_gain > 0, (high_gain, low_gain)
+    window.close()
+    print(f"       ok  (drive {slow}->{fast}, aim gain {low_gain:.3f}->{high_gain:.3f})")
+
+
+def check_team_key_mapping(app) -> None:
+    print("[test] chassis mapping matches the team's agreed scheme")
+    window, driver = _window(app)
+    _link_up(window)
+
+    # Arrows rotate the CHASSIS, not the turret - the team's map, and the opposite of
+    # this GUI's first version. Getting it backwards would spin the robot when the
+    # driver meant to aim.
+    for key, sign, what in ((QtCore.Qt.Key_Right, +1, "right arrow"),
+                            (QtCore.Qt.Key_Left, -1, "left arrow")):
+        window._keys.clear()
+        window._keys.add(key)
+        driver.log.clear()
+        window._tick_control()
+        drv = [l for l in driver.log if l.startswith("DRV")][-1]
+        gim = [l for l in driver.log if l.startswith("GIM")][-1]
+        omega = float(drv.split()[3])
+        assert omega * sign > 0, f"{what} should rotate the chassis, got {drv}"
+        assert gim == "GIM 0.000 0.000", f"{what} must not move the turret: {gim}"
+
+    # Strafe, which a mecanum base has and a differential one does not.
+    window._keys.clear()
+    window._keys.add(QtCore.Qt.Key_D)
+    driver.log.clear()
+    window._tick_control()
+    vy = float([l for l in driver.log if l.startswith("DRV")][-1].split()[2])
+    assert vy > 0, f"D should strafe right, got {vy}"
+
+    # Diagonals: W+A must produce translation on BOTH axes in one command. A
+    # one-function-per-key design cannot express this, and the mecanum kinematics
+    # table's curved and arcing paths depend on it.
+    window._keys.clear()
+    window._keys.update({QtCore.Qt.Key_W, QtCore.Qt.Key_A})
+    driver.log.clear()
+    window._tick_control()
+    parts = [l for l in driver.log if l.startswith("DRV")][-1].split()
+    vx, vy = float(parts[1]), float(parts[2])
+    assert vx > 0 and vy < 0, f"W+A should be forward-left in one demand, got {vx},{vy}"
+
+    # And translation plus rotation together - the "curved trajectory" case.
+    window._keys.add(QtCore.Qt.Key_Right)
+    driver.log.clear()
+    window._tick_control()
+    parts = [l for l in driver.log if l.startswith("DRV")][-1].split()
+    assert float(parts[1]) > 0 and float(parts[3]) > 0,         f"translate+rotate must be simultaneous, got {parts}"
+
+    # +/- step the speed, as the team specified.
+    window._keys.clear()
+    before = window.drive_speed
+    window.keyPressEvent(QtGui.QKeyEvent(
+        QtCore.QEvent.KeyPress, QtCore.Qt.Key_Minus, QtCore.Qt.NoModifier))
+    assert window.drive_speed < before, "minus should slow down"
+    window.keyPressEvent(QtGui.QKeyEvent(
+        QtCore.QEvent.KeyPress, QtCore.Qt.Key_Plus, QtCore.Qt.NoModifier))
+    window.keyPressEvent(QtGui.QKeyEvent(
+        QtCore.QEvent.KeyPress, QtCore.Qt.Key_Plus, QtCore.Qt.NoModifier))
+    assert window.drive_speed > before, "plus should speed up"
+    # The spin box must agree with what is actually sent.
+    assert abs(window.tuning_widgets["drive speed"].value() - window.drive_speed) < 1e-9
+    window.close()
+    print("       ok")
+
+
 def main() -> None:
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     for check in (check_drive_commands, check_turret_and_fire, check_deadman,
                   check_estop_latches, check_aiming_closes_the_loop,
                   check_autotrack_never_fires, check_inference_off_ui_thread,
-                  check_mode_banner):
+                  check_mode_banner, check_tuning_controls, check_team_key_mapping):
         check(app)
     print("\nAll checks passed.")
 

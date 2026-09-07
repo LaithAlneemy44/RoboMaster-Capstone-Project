@@ -213,11 +213,34 @@ class SerialDriver(RobotDriver):
         return self.port_name, True
 
 
+def available_ports() -> list[tuple[str, str]]:
+    """[(device, human description)] for every serial port the OS can see."""
+    try:
+        from serial.tools import list_ports  # noqa: PLC0415
+    except ImportError:
+        return []
+    return [(p.device, p.description or "") for p in list_ports.comports()]
+
+
+def describe_ports() -> str:
+    ports = available_ports()
+    if not ports:
+        return ("No serial ports found. Check the cable, the radio dongle, or the "
+                "Bluetooth pairing.")
+    listing = [f"  {device:<12} {description}" for device, description in ports]
+    return "\n".join(["Available ports:"] + listing)
+
+
 def open_driver(kind: str, port: str | None = None) -> RobotDriver:
     if kind == "mock":
         return MockDriver()
     if not port:
-        sys.exit("--port is required for --driver serial (e.g. COM3 or /dev/ttyUSB0)")
+        # Naming the ports beats "--port is required": guessing wrong produces a link
+        # that never answers, which looks exactly like a flat robot battery.
+        sys.exit("--port is required for --driver serial.\n" + describe_ports())
+    known = {device for device, _ in available_ports()}
+    if known and port not in known:
+        sys.exit(f"No serial port named {port!r}.\n" + describe_ports())
     return SerialDriver(port)
 
 

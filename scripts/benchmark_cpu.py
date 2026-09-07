@@ -76,15 +76,28 @@ class ResourceSampler:
         self.n_cores = n_cores
         self.cpu: list[float] = []
         self.rss: list[int] = []
+        # System-wide load MINUS this process, sampled throughout the cell. baseline_cpu_pct
+        # only samples before the cell starts, so anything that begins competing once the
+        # cell is under way is invisible to it - which is exactly how a set of rows once got
+        # published where a model was slower on six cores than on two.
+        self.external: list[float] = []
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
 
     def _run(self) -> None:
         self.proc.cpu_percent()  # first call primes the delta; its return is garbage
+        psutil.cpu_percent()
+        total_cores = psutil.cpu_count(logical=True) or 1
         while not self._stop.wait(1.0 / SAMPLE_HZ):
             try:
-                self.cpu.append(self.proc.cpu_percent())
+                mine = self.proc.cpu_percent()
+                self.cpu.append(mine)
                 self.rss.append(self.proc.memory_info().rss)
+                # psutil.cpu_percent() is 0-100 across the whole machine; the process
+                # figure is 0-100 per core. Put both on the same scale before
+                # subtracting, or the difference is meaningless.
+                system = psutil.cpu_percent() * total_cores / 100.0
+                self.external.append(max(0.0, system - mine / 100.0))
             except psutil.Error:
                 break
 
@@ -95,6 +108,14 @@ class ResourceSampler:
     def __exit__(self, *exc) -> None:
         self._stop.set()
         self._thread.join(timeout=2.0)
+
+    def external_load(self) -> float:
+        """Mean cores' worth of OTHER work running during the cell.
+
+        The during-run counterpart to baseline_cpu_pct. A cell measured while something
+        else was busy is not a measurement of the model, and this is what says so.
+        """
+        return statistics.fmean(self.external) if self.external else 0.0
 
     def summary(self) -> tuple[float, float, float]:
         """(mean CPU% of one core, mean CPU% normalised to the core cap, peak RSS MiB)."""
@@ -430,6 +451,10 @@ def main() -> None:
         "rss_peak_mib": round(peak_rss, 1),
         "torch_threads": torch.get_num_threads(),
         "baseline_cpu_pct": round(baseline, 1),
+        # Cores' worth of OTHER work seen DURING the cell. baseline is sampled
+        # only before it starts, so this is what catches contention that began
+        # once the cell was already running.
+        "external_load_cores": round(sampler.external_load(), 2),
         "cpu_model": platform.processor(),
         "candidates_per_frame": round(
             getattr(time_classical, "last_candidates", 0.0), 1),
@@ -443,6 +468,12 @@ def main() -> None:
     print(f"cpu      {row['cpu_pct_mean']:.0f}% of one core "
           f"({row['cpu_pct_of_cap']:.0f}% of the {len(affinity)}-thread cap)")
     print(f"rss peak {row['rss_peak_mib']:.0f} MiB")
+    # Calibrated, not guessed: an idle Windows desktop still shows ~4.7% system load,
+    # which is 0.56 cores of housekeeping on a 12-thread machine (WmiPrvSE, System, the
+    # editor). A threshold below that floor makes every cell warn and the signal useless.
+    if row["external_load_cores"] > 1.2:
+        print(f"WARNING contended: {row['external_load_cores']:.2f} cores of other work "
+              f"ran during this cell - re-run it on an idle machine")
 
     if args.no_write:
         return

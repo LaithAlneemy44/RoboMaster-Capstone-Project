@@ -58,6 +58,8 @@ EXTRA_SSD = (
     ("ssd_small_640_anchor", 640), ("ssd_large_640_anchor", 640),
     ("ssd_small_960_anchor", 960), ("ssd_large_960_anchor", 960),
     ("ssd_small_960_groupnorm", 960),
+    # The anchor-floor experiment: min_ratio 0.015, smallest prior 14.4px.
+    ("ssd_small_960_tiny", 960),
 )
 
 # Faster R-CNN, the detector SORT is defined with. Benchmarked alongside the others so
@@ -65,6 +67,8 @@ EXTRA_SSD = (
 # rather than being described from its paper.
 EXTRA_FRCNN = (
     ("frcnn_resnet50_640", 640),
+    # RPN anchor floor 32px -> 8px; armor AP 0.0108 -> 0.3737.
+    ("frcnn_resnet50_640_anchor", 640),
 )
 
 # Levels are (physical cores, use hyperthread siblings). Counted in PHYSICAL cores
@@ -209,6 +213,20 @@ def main() -> None:
         for cores, smt in levels:
             if (name, cores, smt) not in done:
                 cells.append((name, "classical", 960, Path(cfg), cores, smt))
+
+    # --only naming a config this driver does not know silently produced zero cells and
+    # exited "successfully", which looks identical to a finished grid. Say so instead.
+    if args.only:
+        known = ({config_name(f, v, i) for f, v, i in CONFIGS}
+                 | {n for n, _ in EXTRA_SSD} | {n for n, _ in EXTRA_FRCNN}
+                 | {f"classical_{c}" for c in CLASSICAL_CONFIGS})
+        unknown = sorted(set(args.only) - known)
+        if unknown:
+            print("--only names configs this driver does not know:")
+            for name in unknown:
+                print(f"  {name}")
+            sys.exit("Add them to CONFIGS, EXTRA_SSD, EXTRA_FRCNN or "
+                     "CLASSICAL_CONFIGS first.")
 
     total = len(cells)
     if not total:

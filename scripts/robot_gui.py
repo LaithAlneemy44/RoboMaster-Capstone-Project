@@ -68,6 +68,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--target", default="armor",
                         help="Class to aim at. armor is the actual aim point; only the "
                              "YOLO family detects it well.")
+    parser.add_argument("--list-ports", action="store_true",
+                        help="Print the serial ports this machine can see, and exit.")
     parser.add_argument("--check", action="store_true",
                         help="Build everything and exit without showing a window.")
     return parser.parse_args()
@@ -76,7 +78,11 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    from driver import open_driver  # noqa: PLC0415
+    from driver import describe_ports, open_driver  # noqa: PLC0415
+
+    if args.list_ports:
+        print(describe_ports())
+        return
 
     tracker_kwargs = {
         "weights": args.weights, "family": args.family, "config": args.config,

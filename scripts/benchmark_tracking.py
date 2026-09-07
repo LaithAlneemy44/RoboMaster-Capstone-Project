@@ -186,6 +186,10 @@ def main() -> None:
         "cpu_pct_of_cap": round(norm_cpu, 1),
         "rss_peak_mib": round(peak_rss, 1),
         "baseline_cpu_pct": round(baseline, 1),
+        # Cores' worth of OTHER work seen DURING the cell. baseline is sampled
+        # only before it starts, so this is what catches contention that began
+        # once the cell was already running.
+        "external_load_cores": round(sampler.external_load(), 2),
         "cpu_model": platform.processor(),
     }
 

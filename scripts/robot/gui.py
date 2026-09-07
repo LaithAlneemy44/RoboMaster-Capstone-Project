@@ -43,8 +43,8 @@ import vision  # noqa: E402
 
 CONTROL_HZ = 30           # drive/turret command rate
 LINK_TIMEOUT = 1.0        # seconds of telemetry silence before the link counts as lost
-DRIVE_SPEED = 0.6         # normalised demand for a held key; conservative by default
-TURRET_SPEED = 0.5
+DRIVE_SPEED = 0.6         # starting demand for a held key; conservative, and both are
+TURRET_SPEED = 0.5        # adjustable at runtime - see _build_tuning()
 
 
 class VisionWorker(QtCore.QThread):
@@ -118,6 +118,11 @@ class RobotWindow(QtWidgets.QMainWindow):
         self._last_status = None
         self._aim_demand = (0.0, 0.0)
         self._target_id = None
+        # Live state, not module constants: a driver wants a slow precision mode to line
+        # up a shot and full speed to cross the field, and switching between them should
+        # not need a code edit and a restart.
+        self.drive_speed = DRIVE_SPEED
+        self.turret_speed = TURRET_SPEED
 
         self._build_ui()
         text, live = self._mode()
@@ -154,6 +159,63 @@ class RobotWindow(QtWidgets.QMainWindow):
                        "stream" if "://" in spec else "recorded clip")
         live = robot_real and video_real
         return f"robot: {robot_label}  ·  video: {video_label}", live
+
+    def _spin(self, low, high, step, value, setter):
+        box = QtWidgets.QDoubleSpinBox()
+        box.setRange(low, high)
+        box.setSingleStep(step)
+        box.setDecimals(3)
+        box.setValue(value)
+        box.valueChanged.connect(setter)
+        return box
+
+    def _build_tuning(self) -> QtWidgets.QGroupBox:
+        """Speeds and aim gains, adjustable while running.
+
+        The aim gains cannot be tuned without the physical gimbal - there is no way to
+        learn from recorded video how hard to push a real motor - so they must be
+        reachable during a bench session rather than requiring a code edit and a restart
+        between every attempt. The approved plan called for exactly this.
+        """
+        config = self.aim.config
+
+        def set_gain_yaw(v):
+            config.gain_yaw = v
+
+        def set_gain_pitch(v):
+            config.gain_pitch = v
+
+        def set_deadband(v):
+            config.deadband = v
+
+        def set_max_rate(v):
+            config.max_rate = v
+
+        def set_drive(v):
+            self.drive_speed = v
+
+        def set_turret(v):
+            self.turret_speed = v
+
+        rows = (
+            ("drive speed", self._spin(0.05, 1.0, 0.05, self.drive_speed, set_drive)),
+            ("turret speed", self._spin(0.05, 1.0, 0.05, self.turret_speed, set_turret)),
+            ("aim gain yaw", self._spin(0.0, 5.0, 0.1, config.gain_yaw, set_gain_yaw)),
+            ("aim gain pitch",
+             self._spin(0.0, 5.0, 0.1, config.gain_pitch, set_gain_pitch)),
+            ("aim deadband", self._spin(0.0, 0.5, 0.01, config.deadband, set_deadband)),
+            ("aim max rate", self._spin(0.05, 1.0, 0.05, config.max_rate, set_max_rate)),
+        )
+        form = QtWidgets.QFormLayout()
+        form.setContentsMargins(6, 6, 6, 6)
+        form.setSpacing(4)
+        self.tuning_widgets = {}
+        for label, widget in rows:
+            form.addRow(label, widget)
+            self.tuning_widgets[label] = widget
+        box = QtWidgets.QGroupBox("tuning (aim gains are UNTUNED)")
+        box.setLayout(form)
+        return box
 
     def _build_ui(self) -> None:
         text, live = self._mode()
@@ -218,6 +280,7 @@ class RobotWindow(QtWidgets.QMainWindow):
             inner.addWidget(label)
         box.setLayout(inner)
         side.addWidget(box)
+        side.addWidget(self._build_tuning())
         side.addStretch(1)
         side.addWidget(QtWidgets.QLabel(
             "WASD drive · QE rotate · arrows turret\nSpace fire · F intake · T track"))
@@ -226,7 +289,7 @@ class RobotWindow(QtWidgets.QMainWindow):
         columns.addWidget(self.video, stretch=1)
         panel = QtWidgets.QWidget()
         panel.setLayout(side)
-        panel.setFixedWidth(280)
+        panel.setFixedWidth(300)
         columns.addWidget(panel)
 
         layout = QtWidgets.QVBoxLayout()
@@ -326,18 +389,21 @@ class RobotWindow(QtWidgets.QMainWindow):
         keys = self._keys
         forward = (QtCore.Qt.Key_W in keys) - (QtCore.Qt.Key_S in keys)
         strafe = (QtCore.Qt.Key_D in keys) - (QtCore.Qt.Key_A in keys)
-        rotate = (QtCore.Qt.Key_E in keys) - (QtCore.Qt.Key_Q in keys)
-        self.driver.send(protocol.drive(forward * DRIVE_SPEED,
-                                        strafe * DRIVE_SPEED,
-                                        rotate * DRIVE_SPEED))
+        # Left/right arrows rotate the chassis, per the team's agreed mapping. The turret
+        # moved to IJKL to free them: splitting the arrow cluster between chassis and
+        # turret is the kind of thing that gets pressed wrong under pressure.
+        rotate = (QtCore.Qt.Key_Right in keys) - (QtCore.Qt.Key_Left in keys)
+        self.driver.send(protocol.drive(forward * self.drive_speed,
+                                        strafe * self.drive_speed,
+                                        rotate * self.drive_speed))
 
         if self.auto_track:
             pitch, yaw = self._aim_demand
         else:
-            pitch = ((QtCore.Qt.Key_Up in keys) - (QtCore.Qt.Key_Down in keys)) \
-                * TURRET_SPEED
-            yaw = ((QtCore.Qt.Key_Right in keys) - (QtCore.Qt.Key_Left in keys)) \
-                * TURRET_SPEED
+            pitch = ((QtCore.Qt.Key_I in keys) - (QtCore.Qt.Key_K in keys)) \
+                * self.turret_speed
+            yaw = ((QtCore.Qt.Key_L in keys) - (QtCore.Qt.Key_J in keys)) \
+                * self.turret_speed
         self.driver.send(protocol.gimbal(pitch, yaw))
 
     # ------------------------------------------------------------------ actions
@@ -403,8 +469,23 @@ class RobotWindow(QtWidgets.QMainWindow):
             self.btn_track.toggle()
         elif key == QtCore.Qt.Key_F:
             self.btn_intake.toggle()
+        elif key in (QtCore.Qt.Key_Plus, QtCore.Qt.Key_Equal):
+            self._nudge_speed(+0.05)
+        elif key in (QtCore.Qt.Key_Minus, QtCore.Qt.Key_Underscore):
+            self._nudge_speed(-0.05)
         elif not event.isAutoRepeat():
             self._keys.add(key)
+
+    def _nudge_speed(self, delta: float) -> None:
+        """+/- step the drive speed, as the team's key map specifies.
+
+        Driven through the spin box rather than the attribute, so the displayed value and
+        the value actually sent can never disagree - an operator who cannot see the
+        current speed is guessing.
+        """
+        box = self.tuning_widgets["drive speed"]
+        box.setValue(max(box.minimum(), min(box.maximum(), box.value() + delta)))
+        self.statusBar().showMessage(f"drive speed {box.value():.2f}", 1500)
 
     def keyReleaseEvent(self, event) -> None:
         if not event.isAutoRepeat():
