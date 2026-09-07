@@ -67,6 +67,8 @@ whole-robot detection.
 |---|---|---|---|---|---|---|---|---|
 | `classical_strict` | native | 1 | 34.2 | 29.27 | 95 | 546 | 0.0028 | 0.0113 |
 | `classical_strict` | native | 6 | 25.3 | 39.57 | 27 | 553 | 0.0028 | 0.0113 |
+| `classical_tuned` | native | 1 | 39.1 | 25.56 | 96 | 548 | 0.0050 | 0.0199 |
+| `classical_tuned` | native | 6 | 29.2 | 34.30 | 30 | 555 | 0.0050 | 0.0199 |
 | `fast_320` | 320 | 1 | 33.8 | 29.60 | 94 | 703 | 0.4965 | 0.0068 |
 | `fast_320` | 320 | 6 | 19.6 | 50.97 | 87 | 708 | 0.4965 | 0.0068 |
 | `yolo_320` | 320 | 1 | 62.7 | 15.96 | 97 | 750 | 0.5169 | 0.0448 |
@@ -149,6 +151,13 @@ If the board cannot sustain that, **`fast_640`** is the fallback: 37.1 ms at 6 c
 `classical_strict` + `classical` is the fastest pipeline measured (33.85 FPS at one
 core) and is **not a deployment candidate**: mAP 0.0028, and see §7 for what it actually
 detects.
+
+The classical detector has since been tuned properly - coordinate descent over ten axes,
+`scripts/tune_classical_detector.py` - which lifted AP_armor 0.0066 to 0.0199, 1.66x
+better than the best hand-picked config, for 16% more latency. That matters for the
+write-up, because "tuned properly and still at mAP 0.0050" is a far stronger statement
+than "some values were chosen". It does not change the conclusion: the classical arm is
+fast and blind, and the gap to `fast_960`'s armor AP 0.4537 is more than twenty-fold.
 
 **`fast_640` is now measured end to end** and is the closest any armor-capable pipeline
 gets to real time: **24.66 FPS at six cores**, against `fast_960`'s 14.85. The trade is

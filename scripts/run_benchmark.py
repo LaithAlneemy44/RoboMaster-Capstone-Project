@@ -47,7 +47,7 @@ from run_sweep import CONFIGS, config_name, weights_path  # noqa: E402
 # The classical detector has no trained weights - a config IS the model - so it is
 # listed separately rather than squeezed into run_sweep's (family, variant, imgsz)
 # tuple. Only the configs actually scored in detection.csv are benchmarked.
-CLASSICAL_CONFIGS = ("strict", "balanced", "tight", "loose", "paired")
+CLASSICAL_CONFIGS = ("strict", "balanced", "tight", "loose", "paired", "tuned")
 
 # SSD variants that post-date the original sweep and are not in run_sweep.CONFIGS:
 # the corrected-anchor ladder (min_ratio 0.05, which doubled SSD mAP) and the

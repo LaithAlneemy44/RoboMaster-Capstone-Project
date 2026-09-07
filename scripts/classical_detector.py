@@ -116,6 +116,15 @@ CONFIGS = {
     # plate recall even at value_min=200, where it fires on just 1.87% of background
     # pixels, so a tight gate costs recall almost nothing and buys a lot of speed.
     "tight":      Params(value_min=200, sat_min=60, min_area=25, ncc_min=0.25),
+    # Coordinate descent over ten axes on the val split, scripts/tune_classical_detector.py.
+    # AP_armor 0.0066 -> 0.0199, a 3x gain over `balanced` and 1.66x over the best
+    # hand-picked config, with detections falling 47046 -> 14520: the win is a tighter
+    # gate rejecting background, not finding more plates.
+    #
+    # TUNED ON VAL AND REPORTED ON VAL. The detection split has no test set, so this
+    # number is optimistic by construction and the write-up must say so. The hand-picked
+    # configs above carry the same exposure - they were also chosen by looking at val.
+    "tuned":      Params(value_min=200, sat_min=70, max_side=40, pad_ratio=2.0),
     # Not a 5.2 configuration - the domain-standard alternative, for comparison.
     "paired":     Params(value_min=170, sat_min=40, min_area=8, min_side=2,
                          pair_bars=True),
