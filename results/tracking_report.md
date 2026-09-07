@@ -8,6 +8,8 @@ One row per detector+tracker pairing, averaged over sequences. `RT` marks >= 30 
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | 1 | `strict` | `classical` | 30.3 | 0.6 | 30.9 | 33.9 | OK | 2% | 12.5 | 98 | 534 |
 | 1 | `strict` | `sort` | 30.7 | 1.1 | 31.8 | 33.0 | OK | 3% | 12.5 | 97 | 570 |
+| 1 | `fast_640` | `sort` | 85.0 | 0.4 | 85.4 | 11.7 |  | 0% | 5.8 | 94 | 750 |
+| 1 | `fast_640` | `classical` | 87.6 | 0.2 | 87.7 | 11.4 |  | 0% | 5.8 | 94 | 720 |
 | 1 | `ssd_small_960_anchor` | `classical` | 143.0 | 0.1 | 143.1 | 7.0 |  | 0% | 4.7 | 98 | 745 |
 | 1 | `ssd_small_960_anchor` | `sort` | 145.1 | 0.4 | 145.4 | 6.9 |  | 0% | 4.7 | 98 | 779 |
 | 1 | `fast_960` | `sort` | 158.2 | 0.4 | 158.6 | 6.3 |  | 0% | 5.4 | 96 | 788 |
@@ -33,6 +35,8 @@ One row per detector+tracker pairing, averaged over sequences. `RT` marks >= 30 
 | 4 | `yolo_960` | `goturn` | 170.0 | 4179.0 | 4349.0 | 0.2 |  | 96% | 5.1 | 31 | 7347 |
 | 6 | `strict` | `classical` | 22.3 | 0.6 | 22.9 | 47.9 | OK | 2% | 12.5 | 28 | 541 |
 | 6 | `strict` | `sort` | 23.1 | 1.1 | 24.3 | 45.7 | OK | 4% | 12.5 | 28 | 575 |
+| 6 | `fast_640` | `sort` | 40.2 | 0.4 | 40.6 | 24.7 |  | 1% | 5.8 | 98 | 750 |
+| 6 | `fast_640` | `classical` | 46.5 | 0.2 | 46.7 | 21.4 |  | 0% | 5.8 | 99 | 719 |
 | 6 | `fast_960` | `sort` | 66.9 | 0.4 | 67.3 | 14.9 |  | 1% | 5.4 | 98 | 786 |
 | 6 | `fast_960` | `classical` | 70.9 | 0.1 | 71.0 | 14.2 |  | 0% | 5.4 | 98 | 755 |
 | 6 | `ssd_small_960_anchor` | `classical` | 91.0 | 0.1 | 91.2 | 11.0 |  | 0% | 4.7 | 100 | 758 |
@@ -51,10 +55,10 @@ One row per detector+tracker pairing, averaged over sequences. `RT` marks >= 30 
 
 Fastest pairing at each core level:
 
-- **1 core(s)** — `strict` + `classical`, 30.9 ms (33.9 FPS) — best of 17 pairings measured at this level
+- **1 core(s)** — `strict` + `classical`, 30.9 ms (33.9 FPS) — best of 19 pairings measured at this level
 - **2 core(s)** — `yolo_960` + `sort`, 256.5 ms (3.9 FPS) — best of 4 pairings measured at this level
 - **4 core(s)** — `yolo_960` + `sort`, 152.3 ms (6.6 FPS) — best of 4 pairings measured at this level
-- **6 core(s)** — `strict` + `classical`, 22.9 ms (47.9 FPS) — best of 17 pairings measured at this level
+- **6 core(s)** — `strict` + `classical`, 22.9 ms (47.9 FPS) — best of 19 pairings measured at this level
 
 ## Accuracy (secondary — see the caveat below)
 
@@ -87,6 +91,9 @@ Fastest pairing at each core level:
 | `sort_det150` | arc01 | train | 0.570 | [0.542, 0.597] | 0.651 | 7 | 4 / 1 |
 | `sort_det150` | arc02 | train | 0.846 | [0.829, 0.862] | 0.905 | 2 | 6 / 0 |
 | `sort_det150` | arc05 | train | 0.686 | [0.665, 0.707] | 0.782 | 6 | 9 / 3 |
+| `sort_standalone150` | arc01 | train | 0.391 | [0.356, 0.428] | 0.635 | 4 | 4 / 2 |
+| `sort_standalone150` | arc02 | train | 0.383 | [0.348, 0.420] | 0.451 | 15 | 4 / 2 |
+| `sort_standalone150` | arc05 | train | 0.461 | [0.423, 0.494] | 0.702 | 2 | 6 / 1 |
 | `vit_det150` | arc01 | train | 0.570 | [0.542, 0.597] | 0.651 | 7 | 4 / 1 |
 | `vit_det150` | arc02 | train | 0.843 | [0.827, 0.860] | 0.745 | 5 | 6 / 0 |
 | `vit_det150` | arc05 | train | 0.661 | [0.637, 0.685] | 0.677 | 12 | 9 / 3 |

@@ -57,6 +57,10 @@ DETECTORS = (
     ("yolo_960", "yolo", ROOT / "runs" / "detect" / "yolo_960" / "weights" / "best.pt", 960),
     ("fast_960", "yolo", ROOT / "runs" / "detect" / "fast_960" / "weights" / "best.pt", 960),
     ("ssd_small_960_anchor", "ssd", ROOT / "runs" / "ssd" / "ssd_small_960_anchor" / "best.pt", 960),
+    # CAMERA_HANDOFF names fast_640 as the deployment fallback but recorded its combined
+    # cost as "not measured" - the handoff should not leave a number unmeasured for the
+    # config the hardware phase is most likely to pick.
+    ("fast_640", "yolo", ROOT / "runs" / "detect" / "fast_640" / "weights" / "best.pt", 640),
     ("strict", "classical", "strict", 960),
 )
 TRACKERS = ("classical", "sort", "vit", "goturn")

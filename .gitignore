@@ -321,3 +321,4 @@ scratch_gui_*.png
 results/ssd_rerun_log.txt
 results/new_bench_log.txt
 results/frcnn_anchor_train.log
+results/fast640_matrix_log.txt

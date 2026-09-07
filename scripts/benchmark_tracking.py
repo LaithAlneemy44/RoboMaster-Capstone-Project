@@ -206,6 +206,22 @@ def main() -> None:
         return
     args.results.parent.mkdir(parents=True, exist_ok=True)
     is_new = not args.results.exists()
+    if not is_new:
+        # The same guard benchmark_cpu.py carries, and for the same reason - it was
+        # missing here, and adding external_load_cores to the row silently wrote eight
+        # rows one column wide of the header, so cpu_model read back as "0.86". A
+        # DictWriter built from the row rather than the file will do that every time the
+        # schema grows.
+        with args.results.open(newline="", encoding="utf-8") as fh:
+            header = next(csv.reader(fh), [])
+        missing = [k for k in row if k not in header]
+        if missing and header:
+            sys.exit(
+                f"{args.results.name} has no column(s) for {missing}. "
+                "Appending would produce rows wider than the header. Migrate the file "
+                "first, or write to a different --results path."
+            )
+        row = {k: row.get(k, "") for k in header}
     with args.results.open("a", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=list(row))
         if is_new:

@@ -101,6 +101,8 @@ decode again separate. Averaged over 2 clips.
 | `yolo_960` | sort | 1 | 402.5 | 0.35 | 402.8 | 2.48 | 5.1 | 859 |
 | `frcnn_resnet50_640` | sort | 1 | 2255.2 | 0.46 | 2255.6 | 0.44 | 6.3 | 1046 |
 | `classical_strict` | classical | 6 | 22.3 | 0.59 | **22.9** | **47.88** | 12.5 | 541 |
+| `fast_640` | sort | 1 | 85.0 | 0.36 | 85.4 | 11.71 | 5.2 | 726 |
+| `fast_640` | sort | 6 | 40.2 | 0.38 | **40.6** | **24.66** | 5.2 | 728 |
 | `fast_960` | sort | 6 | 66.9 | 0.41 | 67.3 | 14.85 | 5.4 | 786 |
 | `ssd_small_960_anchor` | classical | 6 | 91.0 | 0.15 | 91.2 | 10.97 | 4.7 | 758 |
 | `yolo_960` | sort | 6 | 143.5 | 0.13 | 143.7 | 6.96 | 5.1 | 838 |
@@ -110,6 +112,16 @@ decode again separate. Averaged over 2 clips.
 | `classical_strict` | goturn | 1 | 140.1 | 93322.08 | 93462.1 | 0.03 | 13.3 | 17476 |
 
 Full matrix (100 rows) in `results/tracking_performance.csv`.
+
+**SORT as published loses on both axes.** Its own pipeline - Faster R-CNN feeding SORT's
+Kalman tracker - is the slowest measured at 0.44 FPS on one core, and also the least
+accurate: mean MOTA 0.4118 against 0.7004 for the identical tracker fed by `yolo_960`,
+over the same clips and frames. The tracker is not the difference; the detector is.
+
+Worth carrying into any model choice: `car` AP differs by only 5% between those two
+detectors (0.7782 vs 0.7374), yet MOTA differs by 41%. **Detection mAP is a poor
+predictor of downstream tracking at a fixed operating point** - tracking amplifies
+detection differences well beyond what the accuracy table suggests.
 
 **The Kalman trackers are free.** `classical` costs 0.13–0.60 ms and `sort` 0.13–1.15 ms
 per frame regardless of detector. Detection is ≥99% of every viable pipeline. Any
@@ -138,9 +150,11 @@ If the board cannot sustain that, **`fast_640`** is the fallback: 37.1 ms at 6 c
 core) and is **not a deployment candidate**: mAP 0.0028, and see §7 for what it actually
 detects.
 
-**`fast_640` and `fast_320` were never run through the combined tracking benchmark** —
-only `fast_960` was. Given the tracker costs <1.2 ms in every measured pairing, combined
-cost is detection + ~1 ms, but that specific combination is **not measured**.
+**`fast_640` is now measured end to end** and is the closest any armor-capable pipeline
+gets to real time: **24.66 FPS at six cores**, against `fast_960`'s 14.85. The trade is
+exactly the one the accuracy table describes — armor AP falls 0.4537 to 0.2943 for a 1.7x
+speedup. `fast_320` is still **not measured** in the combined benchmark, and at armor AP
+0.0068 there is little reason to.
 
 ---
 

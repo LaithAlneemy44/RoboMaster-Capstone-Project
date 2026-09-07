@@ -178,8 +178,14 @@ def make_detector(family: str, weights, config: str, imgsz: int, conf: float,
         from PIL import Image  # noqa: PLC0415
 
         from predict_to_coco import (  # noqa: PLC0415
-            load_frcnn, load_ssd, ssd_preprocess,
+            load_frcnn, load_ssd, normalise_device, ssd_preprocess,
         )
+
+        # "0" is Ultralytics' spelling for the first GPU and torch rejects it outright,
+        # so the YOLO branch accepted --device 0 while this one raised. Normalise here
+        # rather than at the call sites: every caller would otherwise have to know which
+        # backend it was about to hit.
+        device = normalise_device(device)
 
         # One SSD implementation, not two: the same loader and preprocessing that
         # produced the detection mAP numbers. A second copy here could drift and the
