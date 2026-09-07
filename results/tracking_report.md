@@ -62,26 +62,28 @@ Fastest pairing at each core level:
 
 | tracker | sequence | split | MOTA | 95% CI | IDF1 | ID switches | MT / ML |
 |---|---|---|---|---|---|---|---|
-| `classical_det` | arc01 | train | 0.397 | [0.357, 0.434] | 0.641 | 8 | 7 / 0 |
-| `classical_det` | arc02 | train | 0.767 | [0.743, 0.791] | 0.856 | 5 | 7 / 1 |
-| `classical_det` | arc03 | val | 0.332 | [0.310, 0.355] | 0.660 | 6 | 9 / 0 |
-| `classical_det` | arc04 | test | 0.196 | [0.164, 0.227] | 0.466 | 13 | 2 / 1 |
-| `classical_det` | arc05 | train | 0.628 | [0.604, 0.648] | 0.750 | 7 | 10 / 3 |
-| `classical_det` | arc06 | train | 0.306 | [0.267, 0.347] | 0.475 | 24 | 5 / 6 |
-| `classical_det` | arc07 | train | 0.508 | [0.453, 0.553] | 0.560 | 10 | 5 / 0 |
+| `classical_default_test` | arc04 | test | 0.481 | [0.454, 0.509] | 0.561 | 13 | 2 / 1 |
+| `classical_det` | arc01 | train | 0.688 | [0.661, 0.712] | 0.750 | 8 | 7 / 0 |
+| `classical_det` | arc02 | train | 0.818 | [0.801, 0.832] | 0.880 | 5 | 7 / 1 |
+| `classical_det` | arc03 | val | 0.851 | [0.836, 0.867] | 0.843 | 6 | 9 / 0 |
+| `classical_det` | arc04 | test | 0.481 | [0.454, 0.509] | 0.561 | 13 | 2 / 1 |
+| `classical_det` | arc05 | train | 0.700 | [0.681, 0.716] | 0.781 | 7 | 10 / 3 |
+| `classical_det` | arc06 | train | 0.447 | [0.423, 0.476] | 0.520 | 24 | 5 / 6 |
+| `classical_det` | arc07 | train | 0.691 | [0.665, 0.717] | 0.646 | 9 | 5 / 0 |
 | `classical_det150` | arc01 | train | 0.570 | [0.542, 0.597] | 0.651 | 7 | 4 / 1 |
 | `classical_det150` | arc02 | train | 0.848 | [0.832, 0.864] | 0.907 | 1 | 6 / 0 |
 | `classical_det150` | arc05 | train | 0.673 | [0.649, 0.697] | 0.782 | 4 | 10 / 3 |
+| `classical_tuned_test` | arc04 | test | 0.492 | [0.463, 0.519] | 0.567 | 14 | 2 / 0 |
 | `goturn_det150` | arc01 | train | 0.557 | [0.529, 0.586] | 0.493 | 14 | 4 / 1 |
 | `goturn_det150` | arc02 | train | 0.838 | [0.821, 0.857] | 0.653 | 7 | 6 / 0 |
 | `goturn_det150` | arc05 | train | 0.658 | [0.635, 0.682] | 0.706 | 15 | 9 / 3 |
-| `sort_det` | arc01 | train | 0.398 | [0.357, 0.435] | 0.641 | 8 | 7 / 0 |
-| `sort_det` | arc02 | train | 0.769 | [0.747, 0.794] | 0.857 | 6 | 7 / 1 |
-| `sort_det` | arc03 | val | 0.330 | [0.308, 0.352] | 0.656 | 8 | 9 / 0 |
-| `sort_det` | arc04 | test | 0.197 | [0.165, 0.228] | 0.480 | 17 | 2 / 1 |
-| `sort_det` | arc05 | train | 0.639 | [0.617, 0.660] | 0.751 | 9 | 9 / 3 |
-| `sort_det` | arc06 | train | 0.310 | [0.272, 0.353] | 0.491 | 25 | 5 / 6 |
-| `sort_det` | arc07 | train | 0.522 | [0.468, 0.569] | 0.594 | 10 | 6 / 0 |
+| `sort_det` | arc01 | train | 0.688 | [0.661, 0.712] | 0.750 | 8 | 7 / 0 |
+| `sort_det` | arc02 | train | 0.819 | [0.804, 0.832] | 0.880 | 6 | 7 / 1 |
+| `sort_det` | arc03 | val | 0.851 | [0.837, 0.868] | 0.839 | 8 | 9 / 0 |
+| `sort_det` | arc04 | test | 0.484 | [0.459, 0.511] | 0.569 | 16 | 2 / 1 |
+| `sort_det` | arc05 | train | 0.710 | [0.695, 0.725] | 0.782 | 9 | 9 / 3 |
+| `sort_det` | arc06 | train | 0.454 | [0.429, 0.482] | 0.538 | 24 | 5 / 6 |
+| `sort_det` | arc07 | train | 0.705 | [0.680, 0.729] | 0.652 | 9 | 6 / 0 |
 | `sort_det150` | arc01 | train | 0.570 | [0.542, 0.597] | 0.651 | 7 | 4 / 1 |
 | `sort_det150` | arc02 | train | 0.846 | [0.829, 0.862] | 0.905 | 2 | 6 / 0 |
 | `sort_det150` | arc05 | train | 0.686 | [0.665, 0.707] | 0.782 | 6 | 9 / 3 |

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import random
 import sys
 from pathlib import Path
@@ -146,9 +147,17 @@ def main() -> None:
 
     if args.no_write:
         return
+    # Fingerprint of the tracker output this row was scored from. The detection table
+    # once carried rows that no longer matched their prediction files, and the tracking
+    # table had the same fault for a worse reason: make_detector gained a "car"-only
+    # class filter, every _det row was recomputed by a different pipeline than the one
+    # that wrote them, and nothing flagged it because the numbers stayed plausible.
+    digest = hashlib.sha1(args.results.read_bytes()).hexdigest()[:12]
+
     row = {
         "name": args.name,
         "sequence": args.seq.name,
+        "results_sha1": digest,
         "mota": round(float(got["mota"]), 6),
         "mota_ci_low": round(low, 6),
         "mota_ci_high": round(high, 6),

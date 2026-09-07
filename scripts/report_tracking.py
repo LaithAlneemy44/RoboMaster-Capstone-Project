@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import collections
 import csv
+import hashlib
 import statistics
 import sys
 from pathlib import Path
@@ -38,6 +39,22 @@ QUALITY = ROOT / "results" / "label_quality.csv"
 SPLIT = ROOT / "data" / "tracking" / "assignment.csv"
 OUT_CSV = ROOT / "results" / "tracking_combined.csv"
 OUT_MD = ROOT / "results" / "tracking_report.md"
+
+
+def stale_rows(accuracy) -> list[str]:
+    """Rows whose recorded results hash matches no tracker output still on disk.
+
+    Every .txt under results/tracking/ is hashed once, including the h2h/ subtree - the
+    head-to-head rows live there rather than beside the per-clip runs, and a search
+    confined to results/tracking/<sequence>/ would report all twelve of them as stale.
+    """
+    on_disk = {
+        hashlib.sha1(path.read_bytes()).hexdigest()[:12]
+        for path in (ROOT / "results" / "tracking").rglob("*.txt")
+    }
+    return [f"{row['name']} / {row['sequence']}"
+            for row in accuracy
+            if row.get("results_sha1") and row["results_sha1"] not in on_disk]
 
 
 def read_split() -> dict:
@@ -94,6 +111,14 @@ def main() -> None:
     acc = read(ACCURACY, required=False)
     quality = read(QUALITY, required=False)
     split = read_split()
+    stale = stale_rows(acc)
+    if stale:
+        print("Refusing to build: these rows were scored from tracker output that no "
+              "longer exists on disk -")
+        for name in stale:
+            print(f"  {name}")
+        sys.exit("Re-run them:  bash scripts/rescore_tracking.sh")
+
     if not perf and not acc:
         sys.exit("Nothing to report - run benchmark_tracking.py / eval_tracking.py first.")
 

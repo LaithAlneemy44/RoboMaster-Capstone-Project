@@ -210,11 +210,11 @@ def make_detector(family: str, weights, config: str, imgsz: int, conf: float,
     return detect
 
 
-def build(kind: str):
+def build(kind: str, params: str = "default"):
     if kind == "classical":
-        from classical_tracker import ClassicalTracker  # noqa: PLC0415
+        from classical_tracker import TUNED, ClassicalTracker  # noqa: PLC0415
 
-        return ClassicalTracker(), False
+        return ClassicalTracker(TUNED if params == "tuned" else None), False
     if kind == "sort":
         from sort import Sort  # noqa: PLC0415
 
@@ -228,6 +228,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--seq", type=Path, required=True)
     parser.add_argument("--tracker", choices=TRACKERS, required=True)
+    parser.add_argument("--params", choices=("default", "tuned"), default="default",
+                        help="Classical tracker parameter set. 'tuned' is the result of "
+                             "tune_classical_tracker.py on the val clip; see the "
+                             "frame-rate warning beside TUNED in classical_tracker.py.")
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--gt-fed", action="store_true",
                         help="Feed ground-truth boxes. The primary protocol.")
@@ -276,7 +280,7 @@ def main() -> None:
         # it tracks the sequence rather than being hardcoded per clip.
         box_median = float(info.get("imWidth", 1280)) / 11.0
 
-    tracker, needs_frame = build(args.tracker)
+    tracker, needs_frame = build(args.tracker, args.params)
     mode = ("gt-fed" if args.gt_fed else
             f"detector={args.detector_config or args.detector.name}")
     print(f"sequence : {args.seq.name}  ({len(images)} frames)")

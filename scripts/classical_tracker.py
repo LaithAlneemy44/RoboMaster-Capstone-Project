@@ -52,6 +52,30 @@ class Params:
     measurement_noise: float = 1e-1  # trust in the detector
 
 
+# Result of scripts/tune_classical_tracker.py: coordinate descent on arc03, the
+# validation clip named in data/tracking/assignment.csv, fed by yolo_960. On that clip it
+# moves MOTA 0.8513 -> 0.8605, IDF1 0.8433 -> 0.8662, and ID switches 6 -> 3.
+#
+# NOT ADOPTED AS THE DEFAULT, deliberately. Every tracking row already reported was
+# produced with the hand-set values above, and silently changing them would leave a
+# results table whose rows no longer describe the same tracker. Pass --params tuned to
+# use these; the write-up should report both.
+#
+# FRAME-RATE WARNING. max_age and min_hits count FRAMES, and these were tuned on 30 fps
+# clips. max_age=30 is one second there; at the 6-16 FPS the CPU pipeline actually
+# achieves it becomes two to five seconds, long enough to keep a track alive through a
+# real disappearance. Tuning made the tracker MORE frame-rate sensitive, not less, by
+# tripling max_age. Rescale before deploying at any other frame rate - see
+# CAMERA_HANDOFF.md.
+TUNED = Params(
+    iou_gate=0.10,          # was 0.20
+    max_age=30,             # was 10
+    min_hits=1,             # was 2
+    process_noise=1e-2,     # unchanged
+    measurement_noise=1e-1,  # unchanged
+)
+
+
 def iou(a, b) -> float:
     ax, ay, aw, ah = a
     bx, by, bw, bh = b
