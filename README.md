@@ -88,6 +88,43 @@ See "Train/val split" below.
 
 The clone itself is under a megabyte — the dataset arrives in the download step.
 
+### Keeping everything off the system drive
+
+The project lives on `E:` and so does everything large it produces — `.venv` (5.5 GB),
+`runs/` (1.7 GB), `Datasets/` (1.4 GB), `results/`. What is **not** on `E:` by default is
+the set of caches the toolchain writes into the user profile. That matters when the system
+drive is full: a run then fails partway through on a temp write, which is far harder to
+diagnose than a clean out-of-space error at the start.
+
+Redirected with persistent user environment variables:
+
+| variable | points at | holds |
+|---|---|---|
+| `TORCH_HOME` | `E:\caches\torch` | pretrained weights torchvision downloads |
+| `PIP_CACHE_DIR` | `E:\caches\pip` | wheel cache |
+| `YOLO_CONFIG_DIR` | `E:\caches\ultralytics` | Ultralytics settings and cache |
+
+Set them again after a machine move or a fresh clone:
+
+```powershell
+setx TORCH_HOME      "E:\caches\torch"
+setx PIP_CACHE_DIR   "E:\caches\pip"
+setx YOLO_CONFIG_DIR "E:\caches\ultralytics"
+```
+
+They apply to newly started shells, not the one that ran `setx`.
+
+**Two things still live on `C:` and are not worth moving.** The Python interpreter itself
+(~164 MB — it would need a reinstall), and Windows `TEMP`. Temp is the one that can still
+bite: on a genuinely full system drive both git and torch write there and fail. Moving it
+is a one-liner, but it is system-wide rather than project-scoped, so it is left as a
+deliberate choice rather than something this project sets for you:
+
+```powershell
+setx TEMP "E:\caches\tmp"
+setx TMP  "E:\caches\tmp"
+```
+
 ### GPU note — this machine needs the `cu126` build specifically
 
 The GTX 1060 is **Pascal (sm_61)**, and CUDA 12.8 dropped Pascal support. A `cu128` or
