@@ -375,30 +375,41 @@ On a lower-power board these numbers will be **worse**, likely substantially.
    were also **never tuned** — hand-set from problem geometry, no sweep was ever run.
    `data/tracking/assignment.csv` reserves arc03 for validation if you tune them.
 
-6. **Armor detection fails outside the YOLO family — and the cause is now known.** It is
-   an *anchor floor*, not an inherent small-object limit. Every anchor-based detector here
-   has its smallest prior far larger than an armor plate (median 25 x 22 px native):
+6. **Armor detection fails outside the YOLO family — cause found, and it is fixable.**
+   It is an *anchor floor*, not an inherent small-object limit. Every anchor-based detector
+   had its smallest prior far larger than an armor plate (median 25 x 22 px native), and
+   lowering it was tested on both architectures:
 
-   | model | smallest prior | armor at that input |
-   |---|---|---|
-   | SSD `min_ratio` 0.2 @960 | 192 px | 12.7 x 19.2 |
-   | SSD `min_ratio` 0.05 @960 | 48 px | 12.7 x 19.2 |
-   | Faster R-CNN RPN @640 | 32 px | 8.4 x 12.8 |
-   | YOLOv11 | **anchor-free**, stride 8 | 12.7 x 10.8 |
+   | model | anchor floor | armor AP | overall mAP |
+   |---|---|---|---|
+   | Faster R-CNN | 32 px (default) | 0.0108 | 0.5198 |
+   | Faster R-CNN | **8 px** | **0.3737** (34.6x) | **0.5929** (+14%) |
+   | SSD @960 | 48 px (`min_ratio` 0.05) | 0.0930 | 0.5137 |
+   | SSD @960 | **14.4 px** (0.015) | 0.2523 (2.7x) | 0.4363 (**-15%**) |
+   | YOLOv11 | **anchor-free**, stride 8 | 0.4537 | 0.6399 |
 
-   Tested by retraining SSD at `min_ratio` 0.015 (14.4 px floor). Armor AP rose
-   **0.0930 → 0.2523, a factor of 2.7**, confirming the mechanism. But overall mAP fell
-   0.5137 → 0.4363, because `base` dropped 0.7852 → 0.4149 and `watcher` 0.5584 → 0.4635.
+   **The two architectures respond completely differently, and that is the finding.**
+   Faster R-CNN gained armor *and* overall accuracy, with `base` essentially unchanged
+   (0.7992 -> 0.7874). SSD gained armor but lost 15% overall, with `base` collapsing
+   0.7852 -> 0.4149.
 
-   **That trade is the real finding.** No single anchor scale serves both a 22 px armor
-   plate and a large base; an anchor-based detector must choose, and this dataset spans
-   both. The anchor-free architecture does not have to choose, which is why `fast_960`
-   holds armor AP 0.4537 *and* the second-best overall mAP simultaneously.
+   The reason is one- versus two-stage. Faster R-CNN's RPN only *proposes*; the RoI head
+   then refines each box with RoIAlign at the right pyramid level, so a large object
+   survives a small anchor floor because the second stage corrects it. SSD is
+   single-stage - its priors are the output after a single regression - so shrinking them
+   costs large-object accuracy directly.
 
-   **Guidance is unchanged:** for armor-level targeting, use YOLO/Fast YOLO at ≥640.
-   `ssd_small_960_tiny` at 0.2523 still trails even `fast_640` (0.2943). The equivalent
-   Faster R-CNN test (RPN floor 32 → 8 px) is running; it will not change this
-   recommendation, since Faster R-CNN is already disqualified on latency at 0.45 FPS.
+   So one cause, three severities set by architecture: anchor-free is immune, two-stage
+   anchored is fixable at no cost, single-stage anchored is fixable only by trading.
+
+   **Deployment guidance is unchanged.** `fast_960` still leads on armor (0.4537), and
+   Faster R-CNN remains disqualified on latency at 0.45 FPS on one core regardless of its
+   accuracy. For armor-level targeting, use YOLO/Fast YOLO at >=640 input.
+
+   Caveat on the Faster R-CNN run: it crashed at epoch 18 of 20 when generated split files
+   were deleted mid-run, so `best.pt` is epoch 14. Epoch 16 scored lower, so it had
+   plateaued, and both runs use best-checkpoint selection - but the learning-rate schedule
+   did not complete, where the baseline's did.
 
 7. **Tracking ground truth is machine-generated** (`scripts/auto_label.py`), not
    hand-labelled. Its labels come from motion association, which shares assumptions with
