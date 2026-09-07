@@ -45,6 +45,14 @@ A "perception model" here means one **detection** model paired with one **tracki
 | `scripts/run_matrix.py` | Drives the detector × tracker × cores grid, resumable |
 | `scripts/report_table.py` | Joins detection accuracy and cost into `results/combined.md` |
 | `scripts/report_tracking.py` | The same for tracking → `results/tracking_report.md` |
+| **Driver station** | |
+| `scripts/robot_gui.py` | The operator GUI: drive, turret, fire, intake, auto-track |
+| `scripts/robot/protocol.py` | Serial wire format, with a selftest |
+| `scripts/robot/driver.py` | Transport: real serial port, or a mock needing no hardware |
+| `scripts/robot/vision.py` | Frame source + the tracker the benchmarks measured |
+| `scripts/robot/aiming.py` | Tracked box to turret rate; sticky target selection |
+| `scripts/robot/test_station.py` | Headless integration checks for the safety interlocks |
+| `docs/ROBOT_PROTOCOL.md` | The firmware contract, incl. the heartbeat requirement |
 | `data/manifest.sha256` | SHA-256 of all 7973 dataset files (provenance + integrity) |
 | `data/splits/assignment.csv` | **The detection split of record** — every image's clip and side |
 | `data/tracking/assignment.csv` | **The tracking split of record** — whole clips, train/val/test |

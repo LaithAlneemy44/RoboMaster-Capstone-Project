@@ -137,15 +137,27 @@ class CvMultiTracker:
                 if e[4] >= self.min_hits and e[3] == 0]
 
 
+# Class name -> COCO category id, from data/splits/coco_val.json. Category 0
+# ("robomaster-car") is an unused supercategory and never appears as a label.
+COCO_IDS = {"armor": 1, "base": 2, "car": 3, "ignore": 4, "watcher": 5}
+
+
 def make_detector(family: str, weights, config: str, imgsz: int, conf: float,
-                  device: str):
-    """Return frame -> [(x, y, w, h)] for either detector family.
+                  device: str, classes=("car",)):
+    """Return frame -> [(x, y, w, h)] for any detector family.
 
     The proposal compares perception models, meaning every detector paired with every
     tracker - so the classical detector has to be drivable here too, not just YOLO. It
     has no weights file (a config IS the model), which is the same split
     predict_to_coco.py already handles by dispatching on --family.
+
+    `classes` defaults to ("car",) because the tracking ground truth contains only whole
+    robots, so every evaluation path wants exactly that. The driver-station GUI overrides
+    it with ("armor",): armor plates are what a turret actually aims at, and they are the
+    class the YOLO family handles far better than anything else measured - fast_960
+    scores AP 0.4537 on armor against SSD's 0.093 and Faster R-CNN's 0.011.
     """
+    wanted = frozenset(classes)
     if family == "classical":
         from classical_detector import CONFIGS, ClassicalDetector  # noqa: PLC0415
 
@@ -153,7 +165,12 @@ def make_detector(family: str, weights, config: str, imgsz: int, conf: float,
             sys.exit(f"Unknown classical config {config!r}. "
                      f"Choose from: {', '.join(sorted(CONFIGS))}")
         detector = ClassicalDetector(CONFIGS[config])
-        return lambda frame: [box for box, _score, _cls in detector.detect(frame)]
+        # The classical detector only ever emits "armor", so this filter is a no-op for
+        # ("armor",) and correctly yields nothing for ("car",) - it genuinely cannot
+        # detect a chassis. Silently returning armor boxes for a "car" request would
+        # misreport what the classical arm is capable of.
+        return lambda frame: [box for box, _score, cls in detector.detect(frame)
+                              if cls in wanted]
 
     if family in ("ssd", "frcnn"):
         import numpy as np  # noqa: PLC0415
@@ -169,6 +186,7 @@ def make_detector(family: str, weights, config: str, imgsz: int, conf: float,
         # tracking rows would silently stop describing the model that was scored.
         load = load_ssd if family == "ssd" else load_frcnn
         model, ckpt_imgsz = load(weights, imgsz, device, quiet=True)
+        wanted_ids = {COCO_IDS[name] for name in wanted if name in COCO_IDS}
 
         def detect(frame):
             image = Image.fromarray(np.ascontiguousarray(frame[:, :, ::-1]))
@@ -178,10 +196,7 @@ def make_detector(family: str, weights, config: str, imgsz: int, conf: float,
             boxes = []
             for box, label, score in zip(out["boxes"].cpu(), out["labels"].cpu(),
                                          out["scores"].cpu()):
-                # Category 3 is "car" in the COCO export; see data/splits/coco_val.json.
-                # Same class filter as the YOLO branch, for the same reason: the
-                # tracking ground truth only ever contains robots.
-                if int(label) != 3 or float(score) < conf:
+                if int(label) not in wanted_ids or float(score) < conf:
                     continue
                 x1, y1, x2, y2 = (float(v) for v in box)
                 boxes.append((x1 * sx, y1 * sy, (x2 - x1) * sx, (y2 - y1) * sy))
@@ -199,9 +214,7 @@ def make_detector(family: str, weights, config: str, imgsz: int, conf: float,
                                verbose=False)[0]
         out = []
         for box in result.boxes:
-            # "car" only: the tracking ground truth tracks robots, so any other class
-            # would be a target the reference never contains.
-            if names[int(box.cls[0])] != "car":
+            if names[int(box.cls[0])] not in wanted:
                 continue
             x1, y1, x2, y2 = (float(v) for v in box.xyxy[0])
             out.append((x1, y1, x2 - x1, y2 - y1))

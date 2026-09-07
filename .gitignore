@@ -317,3 +317,4 @@ results/frcnn_train.log
 results/frcnn_bench_log.txt
 results/ssd_tiny_train.log
 results/rescore_tracking_log.txt
+scratch_gui_*.png
