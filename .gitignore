@@ -315,3 +315,4 @@ results/chain_log.txt
 results/rescore_log.txt
 results/frcnn_train.log
 results/frcnn_bench_log.txt
+results/ssd_tiny_train.log

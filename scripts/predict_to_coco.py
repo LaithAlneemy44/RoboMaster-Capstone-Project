@@ -161,7 +161,11 @@ def load_frcnn(weights: Path, imgsz: int, device: str, quiet: bool = False):
     ckpt_imgsz = int(ckpt["imgsz"])
     if ckpt_imgsz != imgsz and not quiet:
         print(f"  note: --imgsz {imgsz} ignored; checkpoint was trained at {ckpt_imgsz}")
-    model = build_frcnn(ckpt["backbone"], ckpt_imgsz, ckpt["num_classes"])
+    # rpn_sizes is architecture: a checkpoint trained on an 8 px anchor floor must be
+    # rebuilt with it, or every box is decoded against the wrong prior. Checkpoints
+    # written before the option existed carry no key and fall back to the default.
+    model = build_frcnn(ckpt["backbone"], ckpt_imgsz, ckpt["num_classes"],
+                        ckpt.get("rpn_sizes"))
     model.load_state_dict(ckpt["model"])
     model.eval().to(device)
     return model, ckpt_imgsz

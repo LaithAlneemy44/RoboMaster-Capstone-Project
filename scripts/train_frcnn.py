@@ -54,10 +54,26 @@ TRAIN_JSON = SPLITS / "coco_train.json"
 VAL_JSON = SPLITS / "coco_val.json"
 
 
-def build_frcnn(backbone: str, imgsz: int, num_classes: int):
-    """COCO-pretrained Faster R-CNN with the box head resized to ROCO's classes."""
+DEFAULT_RPN_SIZES = (32, 64, 128, 256, 512)
+
+
+def build_frcnn(backbone: str, imgsz: int, num_classes: int, rpn_sizes=None):
+    """COCO-pretrained Faster R-CNN with the box head resized to ROCO's classes.
+
+    RPN ANCHOR SIZES ARE ARCHITECTURE, AND ARE RECORDED
+        torchvision's default smallest anchor is 32 px. An armor plate is 25x22 px
+        natively, which at imgsz 640 becomes 8.4x12.8 - so every armor plate sits below
+        the anchor floor and the RPN cannot propose a well-matched box for one. That is
+        the same failure the SSD ladder had before min_ratio was corrected, where fixing
+        it multiplied mAP by 8.2.
+
+        Like min_ratio on the SSD side, this value must be recorded in the checkpoint and
+        replayed at load time: rebuilding with different anchors decodes every box
+        against the wrong prior, and the result looks plausible rather than wrong.
+    """
     import torchvision
     from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
+    from torchvision.models.detection.rpn import AnchorGenerator
 
     if backbone == "resnet50":
         weights = torchvision.models.detection.FasterRCNN_ResNet50_FPN_Weights.COCO_V1
@@ -77,6 +93,22 @@ def build_frcnn(backbone: str, imgsz: int, num_classes: int):
     # to_native() does not undo, mis-scaling every box that is finally scored.
     model.transform.min_size = (imgsz,)
     model.transform.max_size = imgsz
+
+    sizes = tuple(rpn_sizes) if rpn_sizes else DEFAULT_RPN_SIZES
+    if tuple(sizes) != DEFAULT_RPN_SIZES:
+        # One size per FPN level, three aspect ratios each - the same 3 anchors per
+        # location the pretrained RPN head already predicts, so only the generator is
+        # swapped and the head needs no surgery.
+        levels = len(model.rpn.anchor_generator.sizes)
+        if len(sizes) != levels:
+            raise ValueError(
+                f"--rpn-sizes needs exactly {levels} values, one per FPN level, "
+                f"got {len(sizes)}: {sizes}"
+            )
+        model.rpn.anchor_generator = AnchorGenerator(
+            sizes=tuple((s,) for s in sizes),
+            aspect_ratios=((0.5, 1.0, 2.0),) * levels,
+        )
     return model
 
 
@@ -87,6 +119,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--backbone", choices=("resnet50", "mobilenet"),
                         default="resnet50")
     parser.add_argument("--imgsz", type=int, default=640)
+    parser.add_argument("--rpn-sizes", default=None,
+                        help="Comma-separated RPN anchor size per FPN level, e.g. "
+                             "8,16,32,64,128. Default is torchvision's "
+                             "32,64,128,256,512, whose 32 px floor is larger than an "
+                             "armor plate at any imgsz in this project.")
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch", type=int, default=2, help="Lower first on CUDA OOM.")
     parser.add_argument("--lr", type=float, default=0.005)
@@ -123,11 +160,15 @@ def main() -> None:
     val_set = RocoCoco(VAL_JSON, train=False, imgsz=args.imgsz)
     num_classes = train_set.num_classes
 
-    model = build_frcnn(args.backbone, args.imgsz, num_classes).to(device)
+    rpn_sizes = ([int(v) for v in args.rpn_sizes.split(",")]
+                 if args.rpn_sizes else list(DEFAULT_RPN_SIZES))
+    model = build_frcnn(args.backbone, args.imgsz, num_classes, rpn_sizes).to(device)
     params = sum(p.numel() for p in model.parameters())
 
     print(f"run      : {name}")
     print(f"backbone : {args.backbone} (COCO-pretrained)   imgsz {args.imgsz}")
+    print(f"rpn sizes: {rpn_sizes}"
+          + ("" if rpn_sizes != list(DEFAULT_RPN_SIZES) else "   (torchvision default)"))
     print(f"data     : {len(train_set)} train / {len(val_set)} val   "
           f"classes {num_classes} (background + 5)")
     print(f"params   : {params / 1e6:.2f}M   device {device}")
@@ -182,6 +223,8 @@ def main() -> None:
             "imgsz": args.imgsz, "num_classes": num_classes,
             "epoch": epoch, "val_map": score, "seed": args.seed,
             "arch": "fasterrcnn",
+            # Architecture, not a hyperparameter - see build_frcnn.
+            "rpn_sizes": rpn_sizes,
         }
         if full:
             payload |= {
