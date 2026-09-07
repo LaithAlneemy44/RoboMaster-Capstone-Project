@@ -55,6 +55,16 @@ class RobotDriver(ABC):
     def connected(self) -> bool:
         ...
 
+    @property
+    @abstractmethod
+    def describe(self) -> tuple[str, bool]:
+        """(label for the UI, is_real_hardware).
+
+        The second element drives the simulation banner. It is the driver's own
+        assertion, not something the GUI infers from a class name, so a future
+        transport cannot accidentally present itself as live.
+        """
+
     def heartbeat(self) -> None:
         self._seq += 1
         self.send(protocol.ping(self._seq))
@@ -131,6 +141,10 @@ class MockDriver(RobotDriver):
     def connected(self) -> bool:
         return self._open
 
+    @property
+    def describe(self) -> tuple[str, bool]:
+        return "mock (no hardware)", False
+
 
 class SerialDriver(RobotDriver):
     """A real port. Import of pyserial is deferred so the mock path needs no dependency."""
@@ -193,6 +207,10 @@ class SerialDriver(RobotDriver):
     @property
     def connected(self) -> bool:
         return bool(self._port.is_open)
+
+    @property
+    def describe(self) -> tuple[str, bool]:
+        return self.port_name, True
 
 
 def open_driver(kind: str, port: str | None = None) -> RobotDriver:

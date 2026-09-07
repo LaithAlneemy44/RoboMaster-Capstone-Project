@@ -106,8 +106,8 @@ class RobotWindow(QtWidgets.QMainWindow):
     def __init__(self, driver, source, tracker_kwargs: dict) -> None:
         super().__init__()
         self.driver = driver
+        self._source = source
         self.aim = aiming.AimController()
-        self.setWindowTitle("Robot driver station")
 
         self.armed = False
         self.estopped = False
@@ -120,6 +120,9 @@ class RobotWindow(QtWidgets.QMainWindow):
         self._target_id = None
 
         self._build_ui()
+        text, live = self._mode()
+        self.setWindowTitle(
+            f"Robot driver station  —  {'LIVE' if live else 'SIMULATION'}  —  {text}")
 
         self.worker = VisionWorker(source, tracker_kwargs)
         self.worker.frame_ready.connect(self._on_frame)
@@ -136,7 +139,33 @@ class RobotWindow(QtWidgets.QMainWindow):
 
     # ------------------------------------------------------------------ construction
 
+    def _mode(self) -> tuple[str, bool]:
+        """(banner text, everything is live).
+
+        Two independent axes - the robot link and the video source - and the station is
+        only LIVE when both are. Anything else is simulation and says so, because the
+        one unacceptable failure here is believing a recorded clip and a mock robot are
+        the real thing.
+        """
+        robot_label, robot_real = self.driver.describe
+        spec = str(self._source)
+        video_real = spec.isdigit() or "://" in spec
+        video_label = (f"device {spec}" if spec.isdigit() else
+                       "stream" if "://" in spec else "recorded clip")
+        live = robot_real and video_real
+        return f"robot: {robot_label}  ·  video: {video_label}", live
+
     def _build_ui(self) -> None:
+        text, live = self._mode()
+        self.banner = QtWidgets.QLabel(
+            ("LIVE  —  " if live else "SIMULATION  —  ") + text)
+        self.banner.setAlignment(QtCore.Qt.AlignCenter)
+        self.banner.setMinimumHeight(30)
+        self.banner.setStyleSheet(
+            "background:#1b5e20; color:white; font-weight:bold; font-size:14px;"
+            if live else
+            "background:#e65100; color:white; font-weight:bold; font-size:14px;")
+
         self.video = QtWidgets.QLabel("waiting for video…")
         self.video.setMinimumSize(960, 540)
         self.video.setAlignment(QtCore.Qt.AlignCenter)
@@ -193,12 +222,16 @@ class RobotWindow(QtWidgets.QMainWindow):
         side.addWidget(QtWidgets.QLabel(
             "WASD drive · QE rotate · arrows turret\nSpace fire · F intake · T track"))
 
-        layout = QtWidgets.QHBoxLayout()
-        layout.addWidget(self.video, stretch=1)
+        columns = QtWidgets.QHBoxLayout()
+        columns.addWidget(self.video, stretch=1)
         panel = QtWidgets.QWidget()
         panel.setLayout(side)
         panel.setFixedWidth(280)
-        layout.addWidget(panel)
+        columns.addWidget(panel)
+
+        layout = QtWidgets.QVBoxLayout()
+        layout.addWidget(self.banner)
+        layout.addLayout(columns)
 
         central = QtWidgets.QWidget()
         central.setLayout(layout)

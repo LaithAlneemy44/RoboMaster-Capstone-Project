@@ -230,11 +230,51 @@ def check_inference_off_ui_thread(app) -> None:
     print("       ok")
 
 
+def check_mode_banner(app) -> None:
+    print("[test] the banner cannot call a simulation live")
+    driver = MockDriver()
+
+    # mock robot + recorded clip
+    window = RobotWindow(driver, "data/tracking/arc02/img1/%06d.jpg", {"device": "cpu"})
+    text, live = window._mode()
+    assert not live and "recorded clip" in text and "mock" in text, (text, live)
+    assert "SIMULATION" in window.banner.text()
+    assert "SIMULATION" in window.windowTitle()
+    window.worker.stop(); window.worker.wait(2000); window.close()
+
+    # mock robot + real camera is STILL simulation - the robot half is fake
+    window = RobotWindow(driver, "0", {"device": "cpu"})
+    _, live = window._mode()
+    assert not live, "a mock robot is never live, whatever the camera is"
+    window.worker.stop(); window.worker.wait(2000); window.close()
+
+    # a real port + a recorded clip is also simulation - the video half is fake
+    class FakeSerial(MockDriver):
+        @property
+        def describe(self):
+            return "COM3", True
+
+    window = RobotWindow(FakeSerial(), "data/tracking/arc02/img1/%06d.jpg",
+                         {"device": "cpu"})
+    _, live = window._mode()
+    assert not live, "recorded video is never live, whatever the robot is"
+    window.worker.stop(); window.worker.wait(2000); window.close()
+
+    # both real
+    window = RobotWindow(FakeSerial(), "0", {"device": "cpu"})
+    text, live = window._mode()
+    assert live and "COM3" in text and "device 0" in text, (text, live)
+    assert "LIVE" in window.banner.text() and "SIMULATION" not in window.banner.text()
+    window.worker.stop(); window.worker.wait(2000); window.close()
+    print("       ok")
+
+
 def main() -> None:
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     for check in (check_drive_commands, check_turret_and_fire, check_deadman,
                   check_estop_latches, check_aiming_closes_the_loop,
-                  check_autotrack_never_fires, check_inference_off_ui_thread):
+                  check_autotrack_never_fires, check_inference_off_ui_thread,
+                  check_mode_banner):
         check(app)
     print("\nAll checks passed.")
 
