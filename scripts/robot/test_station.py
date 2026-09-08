@@ -26,6 +26,7 @@ sys.path.insert(0, str(ROOT / "scripts" / "robot"))
 import numpy as np  # noqa: E402
 from PySide6 import QtCore, QtGui, QtWidgets  # noqa: E402
 
+import gui  # noqa: E402
 import protocol  # noqa: E402
 from driver import MockDriver  # noqa: E402
 from gui import RobotWindow  # noqa: E402
@@ -384,12 +385,46 @@ def check_team_key_mapping(app) -> None:
     print("       ok")
 
 
+def check_legend_matches_bindings(app) -> None:
+    print("[test] the on-screen legend names every key the control path reads")
+    import inspect
+    import re
+
+    # This caught a real defect: the mapping moved to the team's scheme while the label
+    # still advertised "QE rotate · arrows turret", so the panel instructed an operator to
+    # rotate with keys that no longer did anything and to aim with keys that by then span
+    # the chassis. Behaviour tests all passed - none of them read the label.
+    source = (inspect.getsource(gui.RobotWindow._tick_control)
+              + inspect.getsource(gui.RobotWindow.keyPressEvent))
+    read_by_control = set(re.findall(r"Qt\.Key_(\w+)", source))
+    named_in_legend = {key for keys in gui.LEGEND_KEYS.values() for key in keys}
+
+    unnamed = read_by_control - named_in_legend
+    assert not unnamed, (
+        f"the control path reads {sorted(unnamed)} but the legend never mentions them - "
+        f"add them to LEGEND_KEYS and LEGEND"
+    )
+
+    for token in gui.LEGEND_KEYS:
+        assert token in gui.LEGEND, f"LEGEND_KEYS lists {token!r}, LEGEND does not show it"
+
+    # And the stale mapping must not come back.
+    assert "QE rotate" not in gui.LEGEND, "the legend advertises the superseded mapping"
+    assert "arrows turret" not in gui.LEGEND, "arrows rotate the chassis, not the turret"
+
+    window, _ = _window(app)
+    assert window.help_label.text() == gui.LEGEND, "the panel must show LEGEND itself"
+    window.close()
+    print(f"       ok  ({len(read_by_control)} keys bound, all named)")
+
+
 def main() -> None:
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     for check in (check_drive_commands, check_turret_and_fire, check_deadman,
                   check_estop_latches, check_aiming_closes_the_loop,
                   check_autotrack_never_fires, check_inference_off_ui_thread,
-                  check_mode_banner, check_tuning_controls, check_team_key_mapping):
+                  check_mode_banner, check_tuning_controls, check_team_key_mapping,
+                  check_legend_matches_bindings):
         check(app)
     print("\nAll checks passed.")
 

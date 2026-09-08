@@ -41,6 +41,25 @@ import aiming  # noqa: E402
 import protocol  # noqa: E402
 import vision  # noqa: E402
 
+# The on-screen legend, and the Qt key each token stands for. Kept as a table rather than
+# a string because the two drifted once already: the mapping moved to the team's scheme
+# while the label still advertised the old one, so the panel told an operator to press Q/E
+# to rotate - which by then did nothing - and to aim with the arrows, which by then spun
+# the chassis. check_legend_matches_bindings asserts every key the control path reads is
+# named here, so the label cannot silently fall behind the behaviour again.
+LEGEND_KEYS = {
+    "WASD": ("W", "A", "S", "D"),
+    "←→": ("Left", "Right"),
+    "+/-": ("Plus", "Minus", "Equal", "Underscore"),
+    "IJKL": ("I", "J", "K", "L"),
+    "Space": ("Space",),
+    "F": ("F",),
+    "T": ("T",),
+    "Esc": ("Escape",),
+}
+LEGEND = ("WASD translate · ←→ rotate · +/- speed\n"
+          "IJKL turret · Space fire · F intake · T track · Esc stop")
+
 CONTROL_HZ = 30           # drive/turret command rate
 LINK_TIMEOUT = 1.0        # seconds of telemetry silence before the link counts as lost
 DRIVE_SPEED = 0.6         # starting demand for a held key; conservative, and both are
@@ -296,8 +315,8 @@ class RobotWindow(QtWidgets.QMainWindow):
         side.addWidget(box)
         side.addWidget(self._build_tuning())
         side.addStretch(1)
-        side.addWidget(QtWidgets.QLabel(
-            "WASD drive · QE rotate · arrows turret\nSpace fire · F intake · T track"))
+        self.help_label = QtWidgets.QLabel(LEGEND)
+        side.addWidget(self.help_label)
 
         columns = QtWidgets.QHBoxLayout()
         columns.addWidget(self.video, stretch=1)
