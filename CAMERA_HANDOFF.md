@@ -263,6 +263,64 @@ Runs at **native resolution, no resize**. Inside `detect()`:
   the camera delivers MJPEG you will pay a comparable cost, if it delivers raw YUV or
   BGR you may avoid it. **Camera capture cost is not measured.**
 
+### Camera choice: colour required, global shutter not
+
+**Colour is not optional.** The classical detector's gate leads with brightness and uses
+hue only to *separate red team from blue* (`RED_BANDS` / `BLUE_BAND`). On a mono sensor it
+would still find plates and lose all friend-or-foe discrimination — and nothing else in
+the project supplies it, because ROCO's classes are `{armor, base, car, ignore, watcher}`
+with no team dimension. **Every DL model here is team-blind by construction.**
+
+**Global shutter buys nothing measurable.** The training data is rolling shutter
+throughout (ROCO match recordings, YouTube clips), the pipeline runs at 6–35 FPS so high
+frame rates are unusable, and motion blur is driven by exposure *time*, not shutter type.
+
+**What does matter is pixels per degree**, since armor plates are the binding constraint at
+median 25 × 22 px:
+
+| camera | resolution | horizontal FOV | px/degree |
+|---|---|---|---|
+| Logitech C270 (chosen) | 1280×720 | ~49° (55° diag) | **26.1** |
+| typical 1080p "wide" webcam | 1920×1080 | ~90° | 21.3 |
+
+A 720p narrow lens beats a 1080p wide one on the number that counts. Widening the FOV 2×
+is geometrically identical to halving the network input, and that step is measured here:
+`fast_640` → `fast_320` takes armor AP **0.2943 → 0.0068**, a 43-fold collapse, while mAP
+only falls 0.61 → 0.50 because the large classes survive. **A wide lens costs armor
+specifically** — the class the whole system aims at.
+
+### Exposure must be locked, and macOS cannot use v4l2-ctl
+
+Auto-exposure hunting as the turret pans slides the image under the classical detector's
+absolute brightness gate (`value_min=200`), and lengthens exposure time, which is what
+actually produces motion blur.
+
+`cv2.CAP_PROP_EXPOSURE` is unreliable on AVFoundation and on Logitech hardware generally,
+and `v4l2-ctl` is Linux-only. The macOS path is `uvc-util`, implemented in
+[`scripts/robot/camera.py`](scripts/robot/camera.py):
+
+```
+python scripts/robot_gui.py --source 0 --lock-exposure --exposure 200
+python scripts/robot/camera.py -I 0     # list the controls this unit advertises
+```
+
+Three things the implementation does deliberately:
+
+- **Locks before opening, verifies after, re-applies once if the open reset it.** A lock
+  that is set and never read back is a lock you do not have.
+- **Resolves control names against what the device advertises** rather than hardcoding
+  them — uvc-util's spelling varies by unit and build. A failure names what was tried and
+  what the device actually offers.
+- **Reports an unsupported platform instead of silently no-opping.** A lock that quietly
+  failed looks exactly like one that worked, until the arena lighting moves.
+
+**Untested against hardware.** `uvc-util` is macOS-only and every number in this repo was
+produced on Windows, so the subprocess calls have never run against a real camera. The
+control-name resolution, parsing, failure reporting and GUI plumbing are covered by
+selftests; the actual UVC transaction is not. **`--exposure` still needs a value tuned
+once against arena lighting** — omitting it locks manual mode at the current exposure,
+which stops the hunting but does not fix the level.
+
 ---
 
 ## 5. Detection → tracking handoff

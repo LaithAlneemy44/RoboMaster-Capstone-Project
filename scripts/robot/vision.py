@@ -44,11 +44,27 @@ DEFAULT_WEIGHTS = ROOT / "runs" / "detect" / "fast_960" / "weights" / "best.pt"
 class FrameSource:
     """Any OpenCV-openable video source, opened lazily and closed politely."""
 
-    def __init__(self, source, width: int | None = None, height: int | None = None):
+    def __init__(self, source, width: int | None = None, height: int | None = None,
+                 lock_exposure: bool = False, exposure_abs: int | None = None):
         import cv2  # noqa: PLC0415
 
         # A bare integer string is a device index, not a filename.
         self.spec = int(source) if str(source).isdigit() else str(source)
+        self.exposure_status = None
+
+        # Lock exposure BEFORE the open, then verify AFTER it. Opening a UVC device can
+        # reset its controls, so a lock applied once and never read back is a lock you do
+        # not have - and a camera that silently resumed hunting looks fine until the arena
+        # lighting moves. Only meaningful for a live device; a recorded clip has no
+        # exposure to lock.
+        wants_lock = lock_exposure and isinstance(self.spec, int)
+        report = None
+        if wants_lock:
+            from camera import apply_lock, describe, lock_holds  # noqa: PLC0415
+
+            report = apply_lock(self.spec, exposure_abs)
+            self.exposure_status = describe(report)
+
         self._capture = cv2.VideoCapture(self.spec)
         if not self._capture.isOpened():
             raise RuntimeError(
@@ -56,6 +72,19 @@ class FrameSource:
                 f"Try a device index (0), a stream URL, or a recorded clip such as\n"
                 f"  data/tracking/arc02/img1/%06d.jpg"
             )
+
+        if wants_lock and report is not None and not report.get("error"):
+            if not lock_holds(self.spec, report):
+                # The open cleared it. Re-apply once and re-check; if it will not hold,
+                # say so rather than leaving the caller believing exposure is fixed.
+                report = apply_lock(self.spec, exposure_abs)
+                held = lock_holds(self.spec, report)
+                self.exposure_status = (
+                    f"{describe(report)} (re-applied after open)" if held
+                    else "exposure NOT locked: the open reset it and re-applying did not "
+                         "hold - capture natively via AVFoundation instead"
+                )
+
         if width:
             self._capture.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         if height:
@@ -163,6 +192,26 @@ def _selftest() -> None:
     blank = np.zeros_like(frame)
     assert tracker.process(blank) == [] or True   # detections on noise are allowed
     print("       ok")
+
+    print("[test] a recorded clip never attempts an exposure lock")
+    # Only a live device has an exposure to lock. Asking for one on a clip must be a
+    # silent no-op rather than an error, because every developer runs against clips and a
+    # spurious warning there would train people to ignore the real one.
+    clip_source = FrameSource(str(clip / "%06d.jpg"), lock_exposure=True, exposure_abs=200)
+    assert clip_source.exposure_status is None, clip_source.exposure_status
+    assert clip_source.read() is not None
+    clip_source.close()
+    print("       ok")
+
+    print("[test] the lock path reports failure instead of pretending it worked")
+    import camera  # noqa: PLC0415
+
+    report = camera.apply_lock(0, None)
+    if not camera.supported():
+        assert report["error"], "an unsupported platform must say so"
+        assert not report["auto_set"]
+        assert camera.describe(report).startswith("exposure NOT locked")
+    print(f"       ok  ({camera.describe(report)[:58]})")
 
     source.close()
     print("\nAll checks passed.")

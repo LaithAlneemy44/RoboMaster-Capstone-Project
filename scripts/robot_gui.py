@@ -68,6 +68,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--target", default="armor",
                         help="Class to aim at. armor is the actual aim point; only the "
                              "YOLO family detects it well.")
+    parser.add_argument("--lock-exposure", action="store_true",
+                        help="Lock the camera's exposure before capture (macOS, uvc-util). "
+                             "Stops auto-exposure hunting as the turret pans, which moves "
+                             "the image under the classical detector's brightness gate.")
+    parser.add_argument("--exposure", type=int, default=None, metavar="N",
+                        help="Absolute exposure time to lock to. Tune once against arena "
+                             "lighting. Omit to lock manual mode at the current value, "
+                             "which still stops the hunting.")
     parser.add_argument("--list-ports", action="store_true",
                         help="Print the serial ports this machine can see, and exit.")
     parser.add_argument("--check", action="store_true",
@@ -102,7 +110,9 @@ def main() -> None:
     from gui import RobotWindow  # noqa: PLC0415
 
     app = QtWidgets.QApplication(sys.argv)
-    window = RobotWindow(robot, args.source, tracker_kwargs)
+    window = RobotWindow(robot, args.source, tracker_kwargs,
+                         lock_exposure=args.lock_exposure,
+                         exposure_abs=args.exposure)
 
     if args.check:
         # Construct everything, prove it holds together, and leave without a window.

@@ -52,11 +52,15 @@ class VisionWorker(QtCore.QThread):
 
     frame_ready = QtCore.Signal(object, list, float)
     failed = QtCore.Signal(str)
+    exposure_state = QtCore.Signal(str)
 
-    def __init__(self, source, tracker_kwargs: dict) -> None:
+    def __init__(self, source, tracker_kwargs: dict,
+                 lock_exposure: bool = False, exposure_abs=None) -> None:
         super().__init__()
         self._source_spec = source
         self._tracker_kwargs = tracker_kwargs
+        self._lock_exposure = lock_exposure
+        self._exposure_abs = exposure_abs
         self._running = True
         self._tracking = False
         self._tracker = None
@@ -69,10 +73,14 @@ class VisionWorker(QtCore.QThread):
 
     def run(self) -> None:
         try:
-            source = vision.FrameSource(self._source_spec)
+            source = vision.FrameSource(self._source_spec,
+                                        lock_exposure=self._lock_exposure,
+                                        exposure_abs=self._exposure_abs)
         except RuntimeError as exc:
             self.failed.emit(str(exc))
             return
+        if source.exposure_status:
+            self.exposure_state.emit(source.exposure_status)
 
         while self._running:
             frame = source.read()
@@ -81,7 +89,9 @@ class VisionWorker(QtCore.QThread):
                 # extended testing without babysitting.
                 try:
                     source.close()
-                    source = vision.FrameSource(self._source_spec)
+                    source = vision.FrameSource(self._source_spec,
+                                                lock_exposure=self._lock_exposure,
+                                                exposure_abs=self._exposure_abs)
                     frame = source.read()
                 except RuntimeError as exc:
                     self.failed.emit(str(exc))
@@ -103,7 +113,8 @@ class VisionWorker(QtCore.QThread):
 
 
 class RobotWindow(QtWidgets.QMainWindow):
-    def __init__(self, driver, source, tracker_kwargs: dict) -> None:
+    def __init__(self, driver, source, tracker_kwargs: dict,
+                 lock_exposure: bool = False, exposure_abs=None) -> None:
         super().__init__()
         self.driver = driver
         self._source = source
@@ -129,7 +140,10 @@ class RobotWindow(QtWidgets.QMainWindow):
         self.setWindowTitle(
             f"Robot driver station  —  {'LIVE' if live else 'SIMULATION'}  —  {text}")
 
-        self.worker = VisionWorker(source, tracker_kwargs)
+        self.worker = VisionWorker(source, tracker_kwargs,
+                                   lock_exposure=lock_exposure,
+                                   exposure_abs=exposure_abs)
+        self.worker.exposure_state.connect(self._on_exposure_state)
         self.worker.frame_ready.connect(self._on_frame)
         self.worker.failed.connect(self._on_vision_failed)
         self.worker.start()
@@ -475,6 +489,17 @@ class RobotWindow(QtWidgets.QMainWindow):
             self._nudge_speed(-0.05)
         elif not event.isAutoRepeat():
             self._keys.add(key)
+
+    def _on_exposure_state(self, message: str) -> None:
+        """Say out loud whether exposure is actually locked.
+
+        A failed lock is not cosmetic: the classical detector gates on absolute
+        brightness, so an unlocked camera changes what the detector sees as the turret
+        pans. Reported in the status bar and the console rather than swallowed, because
+        the failure mode otherwise only shows up as inconsistent detection much later.
+        """
+        self.statusBar().showMessage(message, 10000)
+        print(message)
 
     def _nudge_speed(self, delta: float) -> None:
         """+/- step the drive speed, as the team's key map specifies.
