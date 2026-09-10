@@ -170,6 +170,28 @@ def apply_core_cap(n_physical: int, smt: bool) -> list[int]:
     try:
         proc.cpu_affinity(wanted)
     except (AttributeError, psutil.Error) as exc:
+        if sys.platform == "darwin":
+            sys.exit("\n".join([
+                f"cpu_affinity does not exist on macOS ({exc}).",
+                "",
+                "Two separate problems, and the second outlives the first:",
+                "  1. Darwin exposes no userspace API to pin a process to chosen cores.",
+                "  2. Apple Silicon cores are heterogeneous. A bare count is meaningless",
+                "     there - '4 cores' could mean four performance cores or four",
+                "     efficiency cores, and those differ by roughly a factor of three.",
+                "     The 1/2/4/6 sweep this harness performs does not map onto that",
+                "     architecture even if pinning were possible.",
+                "",
+                "Measure unconstrained instead, and label it honestly:",
+                "    python scripts/benchmark_cpu.py ... --no-core-cap",
+                "",
+                "For an efficiency-core figure, wrap the command in taskpolicy, which",
+                "requests the background QoS class:",
+                "    taskpolicy -b python scripts/benchmark_cpu.py ... --no-core-cap",
+                "",
+                "Rows record the mechanism in core_constraint, so an unconstrained",
+                "macOS row can never be mistaken for a capped one.",
+            ]))
         sys.exit(
             f"cpu_affinity is unavailable here ({exc}).\n"
             "Refusing to continue: without it the core cap is a no-op and every "
@@ -214,6 +236,29 @@ def load_frames(
     return paths, name_to_cat
 
 
+def assert_on_cpu(module, label: str) -> None:
+    """Fail loudly if any weight left the CPU.
+
+    CAMERA_HANDOFF states flatly that no reported CPU number was measured on a GPU. On
+    Windows with a CUDA build that held by construction: torch never moves anything to
+    CUDA implicitly, so passing device="cpu" was enough. On Apple Silicon torch also sees
+    MPS, and a framework that helpfully picks an available accelerator would turn every
+    latency row into a GPU measurement wearing a CPU label - the one error that would
+    invalidate the entire contribution rather than merely bias it.
+
+    Asserting is cheaper than discovering it in the write-up.
+    """
+    devices = {p.device.type for p in module.parameters()}
+    devices |= {b.device.type for b in module.buffers()}
+    stray = devices - {"cpu"}
+    if stray:
+        raise RuntimeError(
+            f"{label} has weights on {sorted(stray)}, not CPU. Every number this script "
+            f"produces is supposed to be a CPU measurement; refusing to report a GPU one "
+            f"under a CPU label."
+        )
+
+
 def time_yolo(weights: Path, name_to_cat, imgsz: int, conf: float, frames: list[Path]):
     """Per-frame (decode_s, headline_s) for a YOLO model, plus its stage breakdown.
 
@@ -226,6 +271,7 @@ def time_yolo(weights: Path, name_to_cat, imgsz: int, conf: float, frames: list[
     from predict_to_coco import load_yolo, yolo_result_to_dets
 
     model, idx_to_cat = load_yolo(weights, name_to_cat, quiet=True)
+    assert_on_cpu(model.model, f"YOLO {weights.name}")
     predict = lambda arr: model.predict(  # noqa: E731
         arr, imgsz=imgsz, conf=conf, device="cpu", verbose=False
     )
@@ -266,6 +312,7 @@ def time_ssd(weights: Path, imgsz: int, conf: float, frames: list[Path],
 
     load = load_ssd if family == "ssd" else load_frcnn
     model, ckpt_imgsz = load(weights, imgsz, "cpu", quiet=True)
+    assert_on_cpu(model, f"{family} {weights.name}")
 
     def one(path):
         t0 = time.perf_counter()
@@ -366,7 +413,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", help="Classical config name, e.g. strict.")
     parser.add_argument("--name", required=True, help="Config name, e.g. yolo_960.")
     parser.add_argument("--imgsz", type=int, required=True)
-    parser.add_argument("--cores", type=int, required=True,
+    parser.add_argument("--no-core-cap", action="store_true",
+                        help="Run without pinning cores and record core_constraint=none. "
+                             "Required on macOS, where cpu_affinity does not exist. Rows "
+                             "produced this way are NOT comparable with capped rows.")
+    parser.add_argument("--cores", type=int, default=None,
                         help="Number of distinct PHYSICAL cores to pin to.")
     parser.add_argument("--smt", action="store_true",
                         help="Also use each core's hyperthread sibling.")
@@ -390,7 +441,21 @@ def main() -> None:
     if not args.gt.is_file():
         sys.exit(f"Missing {args.gt}\nRun: python scripts/make_splits.py")
 
-    affinity = apply_core_cap(args.cores, args.smt)  # BEFORE torch is imported
+    if args.cores is None and not args.no_core_cap:
+        sys.exit("--cores is required unless --no-core-cap is given.")
+    if args.no_core_cap:
+        # Deliberately explicit, never a silent fallback. If a cap was requested and
+        # could not be applied, the run must fail: four identically-fast rows labelled as
+        # four hardware budgets would be a fabricated result, not a measurement.
+        affinity = sorted(range(psutil.cpu_count(logical=True) or 1))
+        constraint = "none"
+        # Record what actually ran, not what was asked for. A row reading cores=1 while
+        # the process had twelve is the precise mislabelling the rest of this harness
+        # goes out of its way to prevent.
+        args.cores = psutil.cpu_count(logical=False) or len(affinity)
+    else:
+        affinity = apply_core_cap(args.cores, args.smt)  # BEFORE torch is imported
+        constraint = "affinity"
 
     import torch
 
@@ -401,8 +466,13 @@ def main() -> None:
 
     frames, name_to_cat = load_frames(args.gt, args.frames or None, args.seed)
     print(f"config : {args.name}   family: {args.family}   imgsz: {args.imgsz}")
-    print(f"cores  : {args.cores} physical{' +SMT' if args.smt else ''} "
-          f"(affinity {affinity})   torch threads: {torch.get_num_threads()}")
+    if constraint == "none":
+        print(f"cores  : UNCONSTRAINED - all {len(affinity)} logical CPUs "
+              f"({args.cores} physical)   torch threads: {torch.get_num_threads()}")
+        print("         core_constraint=none; NOT comparable with affinity-capped rows")
+    else:
+        print(f"cores  : {args.cores} physical{' +SMT' if args.smt else ''} "
+              f"(affinity {affinity})   torch threads: {torch.get_num_threads()}")
     print(f"frames : {len(frames)} (+{WARMUP_FRAMES} warmup)   device: cpu")
     baseline = check_machine_idle()
 
@@ -455,6 +525,10 @@ def main() -> None:
         # only before it starts, so this is what catches contention that began
         # once the cell was already running.
         "external_load_cores": round(sampler.external_load(), 2),
+        # How the core budget was enforced. "affinity" is an OS-enforced pin; "none"
+        # means the process saw the whole machine, which is the only option on macOS.
+        # Recorded so the two can never be silently averaged together.
+        "core_constraint": constraint,
         "cpu_model": platform.processor(),
         "candidates_per_frame": round(
             getattr(time_classical, "last_candidates", 0.0), 1),

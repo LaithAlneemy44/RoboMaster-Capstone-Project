@@ -11,8 +11,8 @@ marked **not measured** rather than estimated.
 
 ## 1. Benchmark board
 
-**There is no target board yet. Every number in this project was measured on the
-development desktop.**
+**Every number in this project was measured on the development desktop, which is NOT the
+deployment target.** See the settled decision below.
 
 | | |
 |---|---|
@@ -31,12 +31,35 @@ physical** cores. Two notes that matter if you re-measure:
   "2 cores" means two physical cores, not one core's two threads. 6 cores + SMT
   measured *slower* than 6 physical cores (811 vs 710 ms on Faster R-CNN).
 
-**Treat the 1-core column as the constrained-hardware proxy.** A Zen 3 core at desktop
-clocks is considerably faster than an N100 or an ARM SBC core, so 1-core Ryzen numbers
-are an optimistic bound for a low-power board, not a prediction for one. CLAUDE.md asks
-for a representative competition CPU to be chosen and documented — **that decision has
-not been made, and nothing has been measured on candidate hardware.** This is the single
-largest open item for the hardware phase.
+**SETTLED — there is no on-robot board.** The camera mounts on the turret and runs down a
+USB tether to an **Apple Silicon MacBook**, which does the inference. That closes the
+board-selection question and makes power, brownout protection and cooling non-issues.
+
+It replaces them with three sharper ones.
+
+**Every number in this repo is x86 Zen 3 on Windows and none of it transfers.** ARM64 is a
+different instruction set with a different BLAS and different threading behaviour. All 140
+performance rows and 108 tracking rows need re-measuring on the laptop before any of them
+can be quoted about the deployed system.
+
+**The core-scaling study cannot be reproduced there as written**, for two independent
+reasons. `psutil.cpu_affinity()` does not exist on macOS — Darwin exposes no userspace
+core-pinning API — and Apple Silicon cores are *heterogeneous*, so the 1/2/4/6 sweep has
+no meaning on it anyway: four performance cores and four efficiency cores differ by
+roughly threefold. `benchmark_cpu.py` now takes `--no-core-cap` and records the mechanism
+in a `core_constraint` column, so an unconstrained macOS row can never be silently
+averaged with an affinity-capped Windows one. For an efficiency-core figure, wrap the
+command in `taskpolicy -b`. That yields a two-point comparison, not a sweep, and the
+write-up should say so.
+
+**The framing in CLAUDE.md no longer matches the deployment.** It motivates the project as
+*"CPU-constrained performance, which is what actually matters for on-robot deployment"*. A
+tethered MacBook is neither on-robot nor constrained — an M-series performance core is
+likely *faster* than the Zen 3 core these numbers came from, so results may improve rather
+than degrade. The research question is untouched and still answerable: classical versus
+deep learning, CPU rather than GPU. But the motivating clause needs rewording before the
+write-up, from *"low-power on-robot board"* to something like *"commodity CPU without a
+discrete GPU"*. This is a wording problem, not a results problem.
 
 ### Was anything reported as CPU actually measured on GPU?
 
@@ -432,7 +455,14 @@ On a lower-power board these numbers will be **worse**, likely substantially.
 
 **Ordered by how much they could change hardware-phase decisions.**
 
-1. **No target board chosen, nothing measured on candidate hardware.** All numbers are
+1. **The deployment target is an Apple Silicon MacBook, and nothing has been measured on
+   it.** The board question is settled - camera on the turret, USB tether, inference on
+   the laptop - which retires power, cooling and brownout risk entirely. What replaces it
+   is larger: every performance row here is x86 Zen 3 on Windows, ARM64 macOS shares
+   neither the instruction set nor the threading behaviour, and `cpu_affinity` does not
+   exist on Darwin, so the core-scaling methodology needs replacing rather than porting.
+   `--no-core-cap` and the `core_constraint` column exist for this; see section 1.
+   **Superseded, retained for context:** All numbers are
    Ryzen 5 5600G with affinity caps. The project's stated contribution is CPU-constrained
    measurement on a representative competition CPU; that CPU has not been selected.
 
