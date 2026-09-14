@@ -385,7 +385,42 @@ was set for 30 fps footage.**
 **Consequence:** if the deployed pipeline runs at a different frame rate than 30 fps —
 and at 6.31 FPS for `fast_960` + `sort` it certainly will — `max_age`, `min_hits`, and
 `process_noise` should be rescaled, or the tracker should be rewritten to take a real
-`dt`. **This has never been tested at any frame rate other than the clips' native 30 fps.**
+`dt`. **Now measured.** `scripts/frame_rate_study.py` strides the arc03 val clip to simulate
+15, 10 and 6 fps, and runs two arms: *naive* keeps the 30 fps constants, *rescaled*
+divides `max_age`/`min_hits` by the stride so they cover the same duration.
+
+| tracker | fps | naive MOTA | rescaled MOTA | naive sw | rescaled sw |
+|---|---|---|---|---|---|
+| classical | 30.0 | 0.8513 | — | 6 | — |
+| classical | 15.0 | 0.8372 | **0.8507** | 6 | 7 |
+| classical | 10.0 | 0.8154 | 0.8355 | 7 | 10 |
+| classical | 6.0 | **0.7720** | 0.8024 | 7 | 11 |
+| sort | 30.0 | 0.8513 | — | 8 | — |
+| sort | 15.0 | 0.8421 | **0.8556** | 6 | 7 |
+| sort | 10.0 | 0.8172 | 0.8391 | 7 | 10 |
+| sort | 6.0 | **0.7751** | 0.8146 | 6 | 7 |
+
+Three things follow, and the third is the one that bites.
+
+**The cost is real and it lands where the pipeline actually runs.** At 6 fps both
+trackers lose roughly **9% MOTA** on the 30 fps constants — and `fast_960` + `sort`
+measures 6.31 FPS. The deployed configuration sits in the worst part of this curve.
+
+**Rescaling recovers about half, and at 15 fps recovers essentially all of it.** Classical
+goes 0.8372 → 0.8507 against a 0.8513 baseline; SORT reaches 0.8556, marginally *above*
+its own 30 fps score. So a meaningful part of the loss is a misconfiguration that costs
+nothing to fix, and `fast_640` + `sort` at 24.66 FPS is close enough to 30 that rescaling
+would leave it essentially whole.
+
+**But rescaling trades MOTA for identity.** ID switches rise under every rescaled
+configuration — classical 7 → 10 at 10 fps and 7 → 11 at 6 fps — because a shorter
+`max_age` retires tracks through occlusions that a longer one would have survived. MOTA
+improves while identity degrades. **If identity matters more than raw detection accuracy
+for targeting, rescale less aggressively than the stride suggests.** Reporting only one
+arm would have hidden this entirely.
+
+The remainder is not recoverable by any parameter: at one frame in five the detector
+supplies five times less evidence, and no constant returns information never sampled.
 
 A related trap: a *variable* frame interval (whatever the CPU manages that frame) breaks
 the constant-velocity assumption differently on every frame. A fixed-rate loop that drops
@@ -501,6 +536,13 @@ On a lower-power board these numbers will be **worse**, likely substantially.
 
    **Still true for SORT and for GOTURN/VitTrack**, which carry their own separate
    `Params` that the sweep never touched.
+
+   **The frame-rate half is now measured** — see §5. Both Kalman trackers lose ~9% MOTA
+   at 6 fps on the 30 fps constants, which is exactly where `fast_960` + `sort` runs.
+   Rescaling `max_age`/`min_hits` by the stride recovers about half, and essentially all
+   of it at 15 fps, but raises ID switches: it trades detection accuracy for identity
+   stability. `run_trackers.py --step N --rescale-temporal` and
+   `eval_tracking.py --step N` reproduce it; raw rows in `results/frame_rate.csv`.
 
 6. **Armor detection fails outside the YOLO family — cause found, and it is fixable.**
    It is an *anchor floor*, not an inherent small-object limit. Every anchor-based detector
