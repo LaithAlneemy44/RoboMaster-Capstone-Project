@@ -106,6 +106,14 @@ def predict_yolo(
 ) -> list[dict]:
     model, idx_to_cat = load_yolo(weights, name_to_cat)
 
+    # An ONNX export has a STATIC batch dimension of 1 (export_onnx.py passes batch=1 and
+    # dynamic=False, so the graph matches the batch-1 shape the models are benchmarked
+    # at). Handing onnxruntime an 8-image batch raises a shape mismatch, so clamp rather
+    # than let the caller's default crash a scoring run halfway through.
+    if weights.suffix == ".onnx" and batch != 1:
+        print(f"  ONNX export is static batch-1; ignoring --batch {batch}")
+        batch = 1
+
     detections: list[dict] = []
     for start in range(0, len(targets), batch):
         chunk = targets[start : start + batch]

@@ -1,0 +1,5 @@
+=== yolo_960 fp32 ===
+exported    : runs\detect\yolo_960\weights\best_fp32.onnx  (36.4 MiB)
+size        : 18.3 MiB (.pt) -> 36.4 MiB  (1.99x)
+verified    : best_fp32.onnx reloads with 5 classes intact
+=== yolo_960 int8 ===

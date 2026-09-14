@@ -357,6 +357,12 @@ def parse_args() -> argparse.Namespace:
         help="Replay a previous assignment.csv exactly (default: the committed one). "
         "Use this to regenerate the machine-local files after moving the project.",
     )
+    parser.add_argument(
+        "--out-dir", type=Path, default=None, metavar="DIR",
+        help="Write the split into DIR instead of data/splits/, with its own "
+             "roco_central.yaml alongside. Use this for cross-validation folds: it "
+             "leaves the committed split untouched so other work can keep reading it.",
+    )
     parser.add_argument("--seed", type=int, default=0, help="RNG seed for --val-frac.")
     parser.add_argument(
         "--list-clips",
@@ -368,6 +374,18 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+
+    # Redirect every output into a fold directory when asked. Rebinding the module
+    # globals keeps the writers below unchanged; the alternative - threading a path
+    # through write_image_lists, write_yaml, write_coco and the assignment writer - buys
+    # nothing for a single-shot CLI. A fold gets its own yaml so it is self-contained and
+    # can be handed straight to train_yolo.py.
+    global OUT_DIR, YAML_PATH, ASSIGNMENT_PATH  # noqa: PLW0603
+    if args.out_dir is not None:
+        OUT_DIR = args.out_dir.resolve()
+        YAML_PATH = OUT_DIR / "roco_central.yaml"
+        ASSIGNMENT_PATH = OUT_DIR / "assignment.csv"
+        print(f"writing split into {OUT_DIR} (data/splits/ left untouched)")
 
     origin = collect_images()
     clips = {name: parse_clip(name) for name in origin}
@@ -430,7 +448,14 @@ def main() -> None:
             print(f"        WARNING: no {', '.join(empty)} instances in {split}.")
 
     print_clip_table(clips, assignment)
-    print(f"\nwrote {YAML_PATH.relative_to(ROOT)} and {OUT_DIR.relative_to(ROOT)}/")
+    # --out-dir may point outside the repo, where relative_to() raises.
+    def _show(path: Path) -> str:
+        try:
+            return str(path.relative_to(ROOT))
+        except ValueError:
+            return str(path)
+
+    print(f"\nwrote {_show(YAML_PATH)} and {_show(OUT_DIR)}/")
     print("Datasets/ untouched - `python scripts/verify_data.py` should still pass.")
 
 

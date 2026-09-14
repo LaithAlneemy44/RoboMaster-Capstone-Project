@@ -45,6 +45,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import platform
 import random
 import statistics
@@ -58,6 +59,12 @@ import psutil
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_GT = ROOT / "data" / "splits" / "coco_val.json"
 DEFAULT_RESULTS = ROOT / "results" / "performance.csv"
+
+# Ultralytics auto-pip-installs missing optional deps by default, and for ONNX it reaches
+# for onnxruntime-GPU. That would add a CUDA execution provider to a project whose entire
+# contribution is CPU measurement - a silent methodology breach, not a convenience. Set
+# before importing ultralytics anywhere.
+os.environ.setdefault("YOLO_AUTOINSTALL", "false")
 
 WARMUP_FRAMES = 5      # first calls pay lazy allocation and cache warming
 SAMPLE_HZ = 20.0       # resource sampler polls at 50 ms
@@ -259,6 +266,29 @@ def assert_on_cpu(module, label: str) -> None:
         )
 
 
+def assert_onnx_cpu(model, label: str) -> None:
+    """Fail loudly if the onnxruntime session bound anything but the CPU provider."""
+    try:
+        session = model.predictor.model.session
+    except AttributeError as exc:
+        raise RuntimeError(
+            f"{label}: could not reach the onnxruntime session to prove it is on CPU "
+            f"({exc}). Refusing to report a latency number that cannot be shown to be "
+            f"a CPU measurement."
+        ) from exc
+
+    providers = list(session.get_providers())
+    stray = [p for p in providers if p not in ("CPUExecutionProvider",
+                                               "AzureExecutionProvider")]
+    if stray:
+        raise RuntimeError(
+            f"{label} session is using {stray}, not CPU. Uninstall onnxruntime-gpu "
+            f"(`pip uninstall onnxruntime-gpu && pip install --force-reinstall --no-deps "
+            f"onnxruntime`) - it shares the onnxruntime namespace and takes priority."
+        )
+    print(f"onnx     : {providers[0]}")
+
+
 def time_yolo(weights: Path, name_to_cat, imgsz: int, conf: float, frames: list[Path]):
     """Per-frame (decode_s, headline_s) for a YOLO model, plus its stage breakdown.
 
@@ -271,13 +301,27 @@ def time_yolo(weights: Path, name_to_cat, imgsz: int, conf: float, frames: list[
     from predict_to_coco import load_yolo, yolo_result_to_dets
 
     model, idx_to_cat = load_yolo(weights, name_to_cat, quiet=True)
-    assert_on_cpu(model.model, f"YOLO {weights.name}")
+    if weights.suffix == ".pt":
+        assert_on_cpu(model.model, f"YOLO {weights.name}")
     predict = lambda arr: model.predict(  # noqa: E731
         arr, imgsz=imgsz, conf=conf, device="cpu", verbose=False
     )
 
     for path in frames[:WARMUP_FRAMES]:
         predict(cv2.imread(str(path)))
+
+    # ONNX needs a different CPU proof, and needs it AFTER warmup. For a .onnx file
+    # Model._load() leaves self.model as the path STRING, so assert_on_cpu's
+    # .parameters() call would raise; and the session that actually runs inference only
+    # exists once predict() has built a predictor. The honest check for onnxruntime is
+    # which execution provider the session bound, not where tensors live.
+    #
+    # This is not hypothetical. Exporting once caused Ultralytics to pip-install
+    # onnxruntime-GPU behind our back, which put CUDA and TensorRT providers ahead of
+    # CPU in the default order. Every latency row after that would have been a GPU
+    # measurement wearing a CPU label.
+    if weights.suffix == ".onnx":
+        assert_onnx_cpu(model, f"ONNX {weights.name}")
 
     decodes, headlines, stages = [], [], []
     for i, path in enumerate(frames):

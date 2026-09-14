@@ -66,6 +66,12 @@ def parse_args() -> argparse.Namespace:
                         help="Stop if val fitness has not improved in this many epochs.")
     parser.add_argument("--workers", type=int, default=4,
                         help="Dataloader workers. Windows spawns processes; 4 is safe.")
+    parser.add_argument(
+        "--data", type=Path, default=None, metavar="YAML",
+        help="Dataset config to train against. Defaults to data/roco_central.yaml. "
+             "Cross-validation folds pass their own, written by "
+             "`make_splits.py --out-dir`, so a fold never disturbs the committed split.",
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--name", default=None, help="Run name under runs/detect/.")
     parser.add_argument("--no-amp", action="store_true",
@@ -97,6 +103,13 @@ def record_probe(row: dict) -> None:
 def main() -> None:
     args = parse_args()
 
+    # Rebinding the module global keeps every downstream reference unchanged. A fold
+    # supplies its own yaml written by make_splits.py --out-dir, which is how
+    # leave-one-clip-out trains seven times without ever touching data/splits/.
+    global DATA_YAML  # noqa: PLW0603
+    if args.data is not None:
+        DATA_YAML = args.data.resolve()
+
     if not DATA_YAML.is_file():
         sys.exit(f"Missing {DATA_YAML}\nRun: python scripts/make_splits.py")
 
@@ -126,7 +139,11 @@ def main() -> None:
     name = args.name or name
 
     print(f"model    : {PRESETS[args.model]}")
-    print(f"data     : {DATA_YAML.relative_to(ROOT)}")
+    try:
+        shown = DATA_YAML.relative_to(ROOT)
+    except ValueError:
+        shown = DATA_YAML          # a fold yaml may live outside the repo
+    print(f"data     : {shown}")
     print(f"device   : {torch.cuda.get_device_name(0)}")
     print(f"epochs   : {epochs}   batch: {args.batch}   imgsz: {args.imgsz}")
     free_gib = torch.cuda.mem_get_info(0)[0] / 1024**3
