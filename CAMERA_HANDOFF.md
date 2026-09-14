@@ -110,7 +110,7 @@ whole-robot detection.
 | `frcnn_resnet50_640` | 640 | 1 | 2210.1 | 0.45 | 98 | 1088 | 0.5198 | 0.0108 |
 | `frcnn_resnet50_640` | 640 | 6 | 709.8 | 1.41 | 98 | 1091 | 0.5198 | 0.0108 |
 
-Full grid (25 configs × 5 core levels = 125 rows) is in `results/performance.csv`.
+Full grid (28 configs × 5 core levels = 140 rows) is in `results/performance.csv`.
 
 ### Detection + tracking combined
 
@@ -136,7 +136,7 @@ decode again separate. Averaged over 2 clips.
 | `fast_960` | goturn | 1 | 163.5 | 4308.65 | 4472.2 | 0.22 | 5.0 | 7211 |
 | `classical_strict` | goturn | 1 | 140.1 | 93322.08 | 93462.1 | 0.03 | 13.3 | 17476 |
 
-Full matrix (100 rows) in `results/tracking_performance.csv`.
+Full matrix (108 rows) in `results/tracking_performance.csv`.
 
 **SORT as published loses on both axes.** Its own pipeline - Faster R-CNN feeding SORT's
 Kalman tracker - is the slowest measured at 0.44 FPS on one core, and also the least
@@ -470,10 +470,14 @@ On a lower-power board these numbers will be **worse**, likely substantially.
    been attempted. Every number is native fp32 PyTorch. This is likely the largest
    available speedup and is entirely unquantified.
 
-3. **No live-camera code exists.** There is no capture loop, no frame source other than
-   files on disk, and no end-to-end real-time script. `benchmark_tracking.py` reads JPEGs
-   from a directory. Camera capture, buffering, frame-drop policy, and
-   capture→inference handoff are all unwritten and unmeasured.
+3. **Live-camera code now exists; its cost does not.** `vision.FrameSource` opens any
+   OpenCV source including a device index, `VisionWorker` runs inference off the UI
+   thread, and `robot/camera.py` locks exposure over UVC. What is still **unwritten** is a
+   frame-drop policy - the loop free-runs, and §5 explains why a fixed-rate loop that drops
+   frames is kinder to a frame-counting tracker than a variable one. What is still
+   **unmeasured** is capture cost: every latency figure here excludes JPEG decode and no
+   camera has ever been attached, so the capture→inference handoff has no number.
+   `scripts/robot/camera_checkup.py` exists to collect exactly that on camera day.
 
 4. **The classical detector detects armor plates, not robot chassis.** Its `detect()`
    returns boxes labelled `"armor"` only. When it feeds the tracker, the tracker is
@@ -482,9 +486,21 @@ On a lower-power board these numbers will be **worse**, likely substantially.
    robot-tracking pipeline, and its tracking accuracy was never evaluated against
    plate-level ground truth. Do not read its speed as a usable result.
 
-5. **Tracker parameters are frame-rate-coupled and untested off 30 fps.** See §5. They
-   were also **never tuned** — hand-set from problem geometry, no sweep was ever run.
-   `data/tracking/assignment.csv` reserves arc03 for validation if you tune them.
+5. **Tracker parameters are frame-rate-coupled and untested off 30 fps.** See §5. This
+   is the live half of this issue: `max_age`/`min_hits` count frames and the Kalman filters
+   assume `dt = 1 frame`, in three independent places (`classical_tracker.py`, `sort.py`,
+   and the GOTURN/VitTrack wrapper in `run_trackers.py`). Every `seqinfo.ini` records
+   `frameRate = 29.97` and **nothing reads it**.
+
+   **Partly resolved since first written:** the classical tracker *was* swept
+   (`scripts/tune_classical_tracker.py`, `results/classical_tracker_tuning.csv`, 23 rows,
+   coordinate descent on arc03). Its result lives as `classical_tracker.TUNED` and is
+   deliberately **not** the default, so every reported row still describes the tracker that
+   produced it; reach it with `--params tuned`. Tuning actually made the frame-rate
+   coupling *worse*, tripling `max_age` from 10 to 30.
+
+   **Still true for SORT and for GOTURN/VitTrack**, which carry their own separate
+   `Params` that the sweep never touched.
 
 6. **Armor detection fails outside the YOLO family — cause found, and it is fixable.**
    It is an *anchor floor*, not an inherent small-object limit. Every anchor-based detector
@@ -546,16 +562,31 @@ On a lower-power board these numbers will be **worse**, likely substantially.
     over images or frames and do **not** capture across-match variance. Real-world
     performance on a different venue, lighting, or robot livery is not estimated.
 
+12. **The four-way tracker comparison rests on far less data than the two-way one.**
+    `classical` and `sort` have full detector-fed rows on **all 7 clips at 300 frames**
+    (2100 frames). GOTURN and VitTrack appear only in the head-to-head rows: **3 clips at
+    150 frames** (450 frames), and never on the held-out test clip `arc04`.
+
+    This is a deliberate, documented cost trade rather than an oversight — GOTURN runs at
+    seconds per frame, so the full 7x300 protocol would take roughly 17 hours, and latency
+    was never what that experiment measured. But it means the "neither is deployable"
+    conclusion rests on the **CPU-cost** table, which is complete, and not on the accuracy
+    table, which for those two trackers is a quarter the size. State the sample sizes when
+    reporting the four-way comparison; do not present it as equally evidenced.
+
 ---
 
 ## Reference: where the numbers live
 
 | file | contents |
 |---|---|
-| `results/performance.csv` | detection CPU, 125 rows (25 configs × 5 core levels) |
-| `results/detection.csv` | detection accuracy, 25 configs, with `predictions_sha1` staleness guard |
-| `results/tracking_performance.csv` | combined detector×tracker CPU, 100 rows |
-| `results/tracking.csv` | tracking accuracy, 26 rows |
+| `results/performance.csv` | detection CPU, 140 rows (28 configs × 5 core levels) |
+| `results/detection.csv` | detection accuracy, 28 configs, with `predictions_sha1` staleness guard |
+| `results/tracking_performance.csv` | combined detector×tracker CPU, 108 rows |
+| `results/tracking.csv` | tracking accuracy, 31 rows |
+| `results/classical_detector_tuning.csv` | 42-row coordinate-descent sweep behind `classical_tuned` |
+| `results/classical_tracker_tuning.csv` | 23-row sweep behind `classical_tracker.TUNED` (not the default) |
+| `results/detection_accum64.csv`, `_preaccum.csv` | SSD gradient-accumulation ablation — a negative result, not part of the headline comparison |
 | `results/combined.md` | detection accuracy joined to cost |
 | `results/tracking_report.md` | tracking report, incl. per-pairing CPU table |
 | `scripts/benchmark_cpu.py` | detection harness — core capping, resource sampling, CIs |
