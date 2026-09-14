@@ -104,14 +104,27 @@ def do_fold(clip: str) -> None:
     run([PY, "scripts/make_splits.py", f"--holdout={clip}", "--out-dir", str(splits)],
         "make_splits")
 
-    # 2. Train, unless this fold's weights already exist (a resumed run).
-    if weights.is_file():
-        print(f"    weights already present, skipping training: {weights.name}")
+    # 2. Train, unless a PREVIOUS RUN FINISHED TRAINING THIS FOLD.
+    #
+    # The marker matters. Ultralytics writes best.pt every time val fitness improves, so
+    # a fold killed at epoch 50 still has one - and an earlier version of this check
+    # skipped training whenever best.pt existed, which would have silently scored a
+    # half-trained fold alongside fully-trained ones and quietly widened the across-clip
+    # spread this study exists to measure. Existence of weights proves training started,
+    # never that it finished.
+    marker = fold_dir / "TRAINED"
+    if marker.is_file():
+        print(f"    training already completed for this fold, skipping")
     else:
+        if weights.is_file():
+            print(f"    found weights with no completion marker - previous run was "
+                  f"interrupted, retraining from scratch")
         run([PY, "scripts/train_yolo.py", "--model", MODEL, "--imgsz", str(IMGSZ),
              "--epochs", str(EPOCHS), "--batch", str(BATCH), "--patience", str(PATIENCE),
              "--seed", str(SEED), "--data", str(splits / "roco_central.yaml"),
              "--name", name], "train_yolo")
+        fold_dir.mkdir(parents=True, exist_ok=True)
+        marker.write_text("training completed", encoding="utf-8")
     if not weights.is_file():
         sys.exit(f"Training reported success but {weights} is missing.")
 
