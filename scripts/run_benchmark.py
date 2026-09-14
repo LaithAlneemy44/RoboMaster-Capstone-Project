@@ -62,6 +62,18 @@ EXTRA_SSD = (
     ("ssd_small_960_tiny", 960),
 )
 
+# ONNX artifacts, as (row name, imgsz, weights path relative to runs/detect). Given an
+# explicit path rather than a derived one, because the fp32 and int8 variants of a single
+# checkpoint live side by side under different filenames.
+EXTRA_ONNX = (
+    ("fast_320_onnx",       320, "fast_320/weights/best_fp32.onnx"),
+    ("fast_320_onnx_int8",  320, "fast_320/weights/best_int8.onnx"),
+    ("fast_640_onnx",       640, "fast_640/weights/best_fp32.onnx"),
+    ("fast_640_onnx_int8",  640, "fast_640/weights/best_int8.onnx"),
+    ("yolo_960_onnx",       960, "yolo_960/weights/best_fp32.onnx"),
+    ("yolo_960_onnx_int8",  960, "yolo_960/weights/best_int8.onnx"),
+)
+
 # Faster R-CNN, the detector SORT is defined with. Benchmarked alongside the others so
 # the published baseline appears on the same latency axis as the models being compared
 # rather than being described from its paper.
@@ -195,6 +207,21 @@ def main() -> None:
             if (name, cores, smt) not in done:
                 cells.append((name, "ssd", imgsz, weights, cores, smt))
 
+    for name, imgsz, rel in EXTRA_ONNX:
+        if args.only and name not in args.only:
+            continue
+        weights = ROOT / "runs" / "detect" / rel
+        if not weights.is_file():
+            print(f"skip {name}: no artifact at {weights} "
+                  f"(run scripts/export_onnx.py first)")
+            continue
+        for cores, smt in levels:
+            if (name, cores, smt) not in done:
+                # family stays "yolo": Ultralytics loads a .onnx through the same
+                # wrapper, so the timed pre/postprocess is identical to the .pt rows and
+                # only the inference engine differs.
+                cells.append((name, "yolo", imgsz, weights, cores, smt))
+
     for name, imgsz in EXTRA_FRCNN:
         if args.only and name not in args.only:
             continue
@@ -219,13 +246,14 @@ def main() -> None:
     if args.only:
         known = ({config_name(f, v, i) for f, v, i in CONFIGS}
                  | {n for n, _ in EXTRA_SSD} | {n for n, _ in EXTRA_FRCNN}
+                 | {n for n, _, _ in EXTRA_ONNX}
                  | {f"classical_{c}" for c in CLASSICAL_CONFIGS})
         unknown = sorted(set(args.only) - known)
         if unknown:
             print("--only names configs this driver does not know:")
             for name in unknown:
                 print(f"  {name}")
-            sys.exit("Add them to CONFIGS, EXTRA_SSD, EXTRA_FRCNN or "
+            sys.exit("Add them to CONFIGS, EXTRA_SSD, EXTRA_ONNX, EXTRA_FRCNN or "
                      "CLASSICAL_CONFIGS first.")
 
     total = len(cells)

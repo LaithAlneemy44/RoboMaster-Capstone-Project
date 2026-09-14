@@ -192,12 +192,37 @@ speedup. `fast_320` is still **not measured** in the combined benchmark, and at 
 
 ## 3. Model input requirements
 
-**Nothing is exported or quantized. Every model runs in its native training framework.**
-No ONNX, OpenVINO, TensorRT, TFLite, or INT8 artifact exists anywhere in the repo —
-verified by search. All CPU numbers above are **native PyTorch / OpenCV fp32**.
+**Every CPU number in the tables above is native PyTorch / OpenCV fp32.** No OpenVINO,
+TensorRT or TFLite artifact exists.
 
-That is the largest single optimisation left on the table and it is entirely unexplored:
-**export and quantization are not measured, not attempted, and not validated.**
+**ONNX export and INT8 quantization now exist for the YOLO family** and their ACCURACY
+cost is measured. Their SPEED benefit is not — that needs an idle machine and has not
+been run. Treat this as half a result.
+
+| config | mAP | armor AP |
+|---|---|---|
+| `fast_640` PyTorch | 0.6073 | 0.2943 |
+| `fast_640_onnx` fp32 | 0.6063 | 0.2891 |
+| `fast_640_onnx_int8` | 0.5690 | 0.2582 |
+| `yolo_960` PyTorch | 0.6679 | 0.4409 |
+| `yolo_960_onnx` fp32 | 0.6634 | 0.4322 |
+| `yolo_960_onnx_int8` | 0.6148 | **0.3630** |
+
+**fp32 export is faithful on mAP but consistently shaves armor.** mAP lands inside the
+bootstrap CI every time, yet armor AP drops ~2% at 640 and 960 (0.2943 → 0.2891,
+0.4409 → 0.4322) while matching to four decimals at 320. The smallest class is the most
+sensitive to the numerical differences graph simplification introduces, and the effect
+grows with input size. Small, reproducible, and worth stating rather than rounding away.
+
+**INT8 costs 6–7% mAP but 11–17% armor** — `fast_320` −17.3%, `fast_640` −10.7%,
+`yolo_960` −16.0%. Quantization degrades the aim point two to three times harder than it
+degrades the average, which is the opposite of what a headline mAP figure would suggest.
+Model files roughly halve (18.3 → 9.7 MiB for `yolo_960`).
+
+**Whether any of that buys speed is unmeasured**, and until it is, INT8 is pure loss.
+Scope is the YOLO family: `load_ssd`/`load_frcnn` rebuild custom modules from raw
+state_dicts and would need hand-written `torch.onnx.export` plus anchor-decode
+re-validation, and Faster R-CNN is disqualified on latency regardless.
 
 | model | framework | network input | aspect handling |
 |---|---|---|---|
@@ -501,9 +526,13 @@ On a lower-power board these numbers will be **worse**, likely substantially.
    Ryzen 5 5600G with affinity caps. The project's stated contribution is CPU-constrained
    measurement on a representative competition CPU; that CPU has not been selected.
 
-2. **No export or quantization, at all.** No ONNX/OpenVINO/TFLite/INT8 path exists or has
-   been attempted. Every number is native fp32 PyTorch. This is likely the largest
-   available speedup and is entirely unquantified.
+2. **Export exists now; its speed benefit does not.** ONNX fp32 and INT8 artifacts exist
+   for `fast_320`, `fast_640` and `yolo_960`, and their accuracy cost is measured (§3):
+   INT8 costs 6–7% mAP and 11–17% armor AP. **No latency number has been taken for any of
+   them** — that needs an idle machine, and CPU benchmarking cannot run while the
+   cross-validation training does. Until then INT8 is measured loss with unmeasured
+   benefit, and no deployment recommendation should rest on it. SSD and Faster R-CNN are
+   still unexported; OpenVINO and TFLite remain untouched.
 
 3. **Live-camera code now exists; its cost does not.** `vision.FrameSource` opens any
    OpenCV source including a device index, `VisionWorker` runs inference off the UI

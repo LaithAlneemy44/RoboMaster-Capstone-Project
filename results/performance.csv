@@ -139,3 +139,4 @@ classical_tuned,classical,960,2,0,2,397,33.405,4.642,33.758,39.983,32.954,33.877
 classical_tuned,classical,960,4,0,4,397,29.439,4.469,29.815,35.923,28.999,29.863,33.968,6.284,0.0,29.439,0.0,143.3,35.8,545.4,4,4.9,0.6,affinity,"AMD64 Family 25 Model 80 Stepping 0, AuthenticAMD",48.4
 classical_tuned,classical,960,6,0,6,397,29.155,4.636,29.439,36.058,28.693,29.616,34.299,6.504,0.0,29.155,0.0,154.2,25.7,548.5,6,2.1,0.74,affinity,"AMD64 Family 25 Model 80 Stepping 0, AuthenticAMD",48.4
 classical_tuned,classical,960,6,1,12,397,28.742,4.5,28.944,35.45,28.289,29.159,34.793,6.569,0.0,28.742,0.0,220.2,18.4,554.8,12,5.1,0.57,affinity,"AMD64 Family 25 Model 80 Stepping 0, AuthenticAMD",48.4
+fast_320_onnx,yolo,320,1,0,1,397,222.613,45.322,216.262,302.151,218.507,226.784,4.492,74.398,31.596,155.965,32.88,84.5,84.5,814.5,8,17.1,2.37,affinity,"AMD64 Family 25 Model 80 Stepping 0, AuthenticAMD",0.0
