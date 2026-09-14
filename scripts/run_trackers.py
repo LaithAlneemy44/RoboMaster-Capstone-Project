@@ -229,14 +229,45 @@ def make_detector(family: str, weights, config: str, imgsz: int, conf: float,
     return detect
 
 
-def build(kind: str, params: str = "default"):
+def rescale_temporal(base, step: int):
+    """Divide the frame-counted parameters by the stride.
+
+    max_age and min_hits are counts of FRAMES, so at one frame in N they cover N times as
+    much wall-clock time as they were set for. max_age=10 is 0.33 s at 30 fps and 1.0 s at
+    10 fps - long enough to hold a track through a real disappearance. Dividing restores
+    the intended DURATION.
+
+    Whether that actually recovers the accuracy lost to striding is the experiment: the
+    detector also sees three times less evidence, and no amount of parameter rescaling
+    returns information that was never sampled.
+    """
+    import dataclasses  # noqa: PLC0415
+
+    return dataclasses.replace(
+        base,
+        max_age=max(1, round(base.max_age / step)),
+        min_hits=max(1, round(base.min_hits / step)),
+    )
+
+
+def build(kind: str, params: str = "default", step: int = 1, rescale: bool = False):
     if kind == "classical":
-        from classical_tracker import TUNED, ClassicalTracker  # noqa: PLC0415
+        from classical_tracker import TUNED, Params, ClassicalTracker  # noqa: PLC0415
 
-        return ClassicalTracker(TUNED if params == "tuned" else None), False
+        chosen = TUNED if params == "tuned" else Params()
+        if rescale and step > 1:
+            chosen = rescale_temporal(chosen, step)
+            print(f"           rescaled: max_age={chosen.max_age} "
+                  f"min_hits={chosen.min_hits} for 1-in-{step} frames")
+        return ClassicalTracker(chosen), False
     if kind == "sort":
-        from sort import Sort  # noqa: PLC0415
+        from sort import Params as SortParams, Sort  # noqa: PLC0415
 
+        if rescale and step > 1:
+            scaled = rescale_temporal(SortParams(), step)
+            print(f"           rescaled: max_age={scaled.max_age} "
+                  f"min_hits={scaled.min_hits} for 1-in-{step} frames")
+            return Sort(scaled), False
         return Sort(), False
     return CvMultiTracker(kind), True
 
@@ -269,6 +300,18 @@ def parse_args() -> argparse.Namespace:
                              "Measures detection noise, not tracking.")
     parser.add_argument("--device", default="0", help="Detector device; not a benchmark.")
     parser.add_argument("--out", type=Path, default=None)
+    parser.add_argument(
+        "--step", type=int, default=1, metavar="N",
+        help="Process every Nth frame, simulating a capture rate of source_fps/N. "
+             "Frame numbering is preserved, so eval_tracking.py --step N scores the "
+             "same subset. Use it to test the frame-rate coupling in max_age/min_hits.",
+    )
+    parser.add_argument(
+        "--rescale-temporal", action="store_true",
+        help="With --step N, divide max_age and min_hits by N so they cover the same "
+             "DURATION as at full frame rate. Without this, a strided run keeps the "
+             "30 fps constants and the tracker holds tracks N times too long.",
+    )
     parser.add_argument("--limit", type=int, default=0)
     return parser.parse_args()
 
@@ -283,6 +326,17 @@ def main() -> None:
         images = images[:args.limit]
     if not images:
         sys.exit(f"No frames in {args.seq / info['imDir']}")
+
+    # --step simulates a lower capture rate from the clips already on disk. Every
+    # temporal parameter in every tracker here counts FRAMES - max_age, min_hits, and a
+    # Kalman filter whose transition matrix assumes dt = 1 frame - and all were set for
+    # 30 fps footage. The deployed pipeline runs at 6-25 FPS, and nothing had tested that.
+    #
+    # Frames keep their ORIGINAL numbering rather than being renumbered 1..M, so ground
+    # truth still lines up by frame id. eval_tracking.py --step filters both sides to the
+    # same subset, exactly as --max-frame already truncates both.
+    selected = list(enumerate(images))[:: max(1, args.step)]
+    effective_fps = float(info.get("frameRate", 30.0)) / max(1, args.step)
 
     gt = read_gt(args.seq, args.gt) if args.gt_fed else None
     detect = None
@@ -299,14 +353,21 @@ def main() -> None:
         # it tracks the sequence rather than being hardcoded per clip.
         box_median = float(info.get("imWidth", 1280)) / 11.0
 
-    tracker, needs_frame = build(args.tracker, args.params)
+    tracker, needs_frame = build(args.tracker, args.params, args.step,
+                                 args.rescale_temporal)
     mode = ("gt-fed" if args.gt_fed else
             f"detector={args.detector_config or args.detector.name}")
-    print(f"sequence : {args.seq.name}  ({len(images)} frames)")
+    if args.step > 1:
+        print(f"sequence : {args.seq.name}  ({len(selected)} of {len(images)} frames, "
+              f"every {args.step})")
+        print(f"           simulating {effective_fps:.1f} fps from "
+              f"{float(info.get('frameRate', 30.0)):.2f} fps source")
+    else:
+        print(f"sequence : {args.seq.name}  ({len(images)} frames)")
     print(f"tracker  : {args.tracker}   input: {mode}")
 
     rows = []
-    for index, path in enumerate(images):
+    for index, path in selected:
         frame_no = index + 1
         frame = cv2.imread(str(path))
         if frame is None:

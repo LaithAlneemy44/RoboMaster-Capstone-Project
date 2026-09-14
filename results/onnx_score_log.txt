@@ -1,0 +1,7 @@
+=== yolo_960_onnx ===
+armor              0.4322      0.8964
+base               0.8659      0.9950
+car                0.7764      0.9852
+watcher            0.5791      0.9809
+mAP@[.5:.95] 0.6634   95% CI [0.6584, 0.6711]  (1000 resamples over 397 images)
+=== yolo_960_onnx_int8 ===

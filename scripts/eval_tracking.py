@@ -96,6 +96,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gt", type=Path, default=None, help="Defaults to seq/gt/gt.txt")
     parser.add_argument("--iou", type=float, default=0.5,
                         help="Distance threshold for a match.")
+    parser.add_argument(
+        "--step", type=int, default=1, metavar="N",
+        help="Score only every Nth frame, matching run_trackers.py --step N. Both "
+             "ground truth and results are filtered, so the comparison stays fair.",
+    )
     parser.add_argument("--max-frame", type=int, default=0,
                         help="Score only frames up to this index, truncating "
                              "ground truth to match. 0 = whole clip.")
@@ -121,6 +126,17 @@ def main() -> None:
         # tracker.
         gt = gt[gt.index.get_level_values("FrameId") <= args.max_frame]
         res = res[res.index.get_level_values("FrameId") <= args.max_frame]
+
+    if args.step > 1:
+        # Same hazard as --max-frame, same remedy. run_trackers.py --step keeps original
+        # frame numbering, so a strided run produces rows only for frames 1, 1+N, 1+2N...
+        # Scoring those against the full ground truth would count every skipped frame as
+        # a miss and report a frame-rate collapse that is an artefact of the comparison,
+        # not of the tracker. Both sides are filtered to the same subset.
+        keep = (gt.index.get_level_values("FrameId") - 1) % args.step == 0
+        gt = gt[keep]
+        keep_res = (res.index.get_level_values("FrameId") - 1) % args.step == 0
+        res = res[keep_res]
 
     acc = mm.utils.compare_to_groundtruth(gt, res, "iou", distth=args.iou)
     metrics = ["mota", "motp", "idf1", "num_switches", "num_false_positives",
@@ -171,10 +187,27 @@ def main() -> None:
         "mostly_lost": int(got["mostly_lost"]),
         "iou_thresh": args.iou,
         "max_frame": args.max_frame,
+        "step": args.step,
         "bootstrap_n": args.bootstrap,
     }
     args.csv.parent.mkdir(parents=True, exist_ok=True)
     is_new = not args.csv.exists()
+    if not is_new:
+        # The third copy of this guard, after benchmark_cpu.py and benchmark_tracking.py.
+        # A DictWriter built from the ROW rather than the FILE writes a wider row than the
+        # header the moment the schema grows, and every later reader silently mis-maps the
+        # tail. benchmark_tracking.py did exactly that once - cpu_model came back as
+        # "0.86" - and adding the `step` column here would have repeated it.
+        with args.csv.open(newline="", encoding="utf-8") as fh:
+            header = next(csv.reader(fh), [])
+        missing = [k for k in row if k not in header]
+        if missing and header:
+            sys.exit(
+                f"{args.csv.name} has no column(s) for {missing}. Appending would "
+                f"produce rows wider than the header. Migrate the file first, or write "
+                f"to a different --csv path."
+            )
+        row = {k: row.get(k, "") for k in header}
     with args.csv.open("a", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=list(row))
         if is_new:
