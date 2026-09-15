@@ -219,10 +219,64 @@ grows with input size. Small, reproducible, and worth stating rather than roundi
 degrades the average, which is the opposite of what a headline mAP figure would suggest.
 Model files roughly halve (18.3 → 9.7 MiB for `yolo_960`).
 
-**Whether any of that buys speed is unmeasured**, and until it is, INT8 is pure loss.
+**Now measured, and the answer is unfavourable on this CPU.** Latency in ms, with the
+speedup over PyTorch in brackets:
+
+| config | cores | PyTorch | ONNX fp32 | ONNX INT8 |
+|---|---|---|---|---|
+| `fast_320` | 1 | 33.8 | **20.1 (1.68x)** | 32.0 (1.06x) |
+| `fast_320` | 6 | 19.6 | **11.7 (1.68x)** | 21.0 (0.93x) |
+| `fast_640` | 1 | 84.2 | 76.6 (1.10x) | 118.4 (0.71x) |
+| `fast_640` | 6 | 37.1 | 36.5 (1.02x) | 64.3 (0.58x) |
+| `yolo_960` | 1 | 394.4 | 514.1 (0.77x) | 726.0 (0.54x) |
+| `yolo_960` | 6 | 146.4 | 227.4 (0.64x) | 330.8 (0.44x) |
+
+**ONNX fp32 helps small models and hurts large ones.** `fast_320` gains a genuine 1.68x,
+`fast_640` is parity, and `yolo_960` is 1.6x *slower*. Export is not a free win to be
+applied across the board; it is a per-model question.
+
+**INT8 is slower than fp32 everywhere, so it loses on both axes** — it costs 11-17% armor
+AP (above) *and* runs slower than the model it was quantized from. On this machine there
+is no case for it.
+
+**The cause is the CPU, and it is verified rather than assumed.** The Ryzen 5 5600G
+reports `avx2: True`, `avx512: NONE`, `vnni: NONE`. Without VNNI there is no hardware
+acceleration for INT8 GEMM, so quantization pays dequantize/requantize overhead at every
+layer boundary and buys nothing back. **This is a finding about Zen 3, not about
+quantization in general** — and the deployment target is Apple Silicon, whose integer
+inference path is different. Re-measure there before concluding anything about the
+deployed system.
+
+**A reproducible oddity worth knowing:** two threads is a pathological operating point
+for ONNX Runtime here. `fast_320` runs 20.1 ms on one core but 26.4 ms on two, recovering
+to 13.8 at four. Reproduced across independent runs (26.5 then 26.4). Per-operator
+synchronisation appears to outweigh the parallelism at that width.
+
 Scope is the YOLO family: `load_ssd`/`load_frcnn` rebuild custom modules from raw
 state_dicts and would need hand-written `torch.onnx.export` plus anchor-decode
 re-validation, and Faster R-CNN is disqualified on latency regardless.
+
+### Measuring ONNX needs two settings that affinity capping does not cover
+
+Getting these numbers took three attempts, and the first two produced confident, wrong
+results. Recorded because anyone re-measuring on the Mac will hit the same thing.
+
+`benchmark_cpu.py` constrains PyTorch with `psutil.cpu_affinity()`, which is the only
+mechanism that works there — `torch.set_num_threads()` and `OMP_NUM_THREADS` were both
+measured to do nothing. **ONNX Runtime ignores the affinity mask entirely** and needs two
+separate session options:
+
+- `intra_op_num_threads` defaults to 0, "choose automatically", sized from the machine's
+  CPU count. Under a 1-core cap that built a 12-thread pool on one core and reported ONNX
+  as **6.5x slower than PyTorch**.
+- Worker threads **spin-wait** between operators by default. With that alone still on,
+  `fast_320` at six cores measured 76.0 ms against 12.2 ms with spinning disabled — a
+  6.2x penalty, and it made the model look *slower* as cores were added.
+
+Both were diagnosed from the shape of the error rather than the magnitude: a penalty that
+tracks the core cap, or that grows with added cores, cannot be an engine difference. The
+mask *shape* was ruled out by measurement — a contiguous `[0..5]` mask gave an identical
+76.0 ms to the strided one, so striding was not the cause.
 
 | model | framework | network input | aspect handling |
 |---|---|---|---|
@@ -526,13 +580,14 @@ On a lower-power board these numbers will be **worse**, likely substantially.
    Ryzen 5 5600G with affinity caps. The project's stated contribution is CPU-constrained
    measurement on a representative competition CPU; that CPU has not been selected.
 
-2. **Export exists now; its speed benefit does not.** ONNX fp32 and INT8 artifacts exist
-   for `fast_320`, `fast_640` and `yolo_960`, and their accuracy cost is measured (§3):
-   INT8 costs 6–7% mAP and 11–17% armor AP. **No latency number has been taken for any of
-   them** — that needs an idle machine, and CPU benchmarking cannot run while the
-   cross-validation training does. Until then INT8 is measured loss with unmeasured
-   benefit, and no deployment recommendation should rest on it. SSD and Faster R-CNN are
-   still unexported; OpenVINO and TFLite remain untouched.
+2. **Export is measured on both axes and INT8 does not pay here.** ONNX fp32 gives
+   `fast_320` a real 1.68x, leaves `fast_640` at parity, and makes `yolo_960` 1.6x
+   slower — a per-model question, not a blanket win. INT8 is slower than fp32 everywhere
+   *and* costs 11–17% armor AP, so it loses on both axes. Verified cause: this CPU has
+   AVX2 but no VNNI, so INT8 GEMM gets no hardware acceleration. **That conclusion is
+   about Zen 3 and may not hold on the Apple Silicon deployment target** — re-measure
+   before ruling quantization out there. SSD and Faster R-CNN are still unexported;
+   OpenVINO and TFLite remain untouched.
 
 3. **Live-camera code now exists; its cost does not.** `vision.FrameSource` opens any
    OpenCV source including a device index, `VisionWorker` runs inference off the UI

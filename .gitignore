@@ -326,3 +326,7 @@ results/classical_sweep_log.txt
 results/tuned_bench_log.txt
 results/loco_log.txt
 results/export_log.txt
+results/onnx_bench_log.txt
+results/onnx_rerun_log.txt
+results/onnx_score_log.txt
+results/framerate_log.txt

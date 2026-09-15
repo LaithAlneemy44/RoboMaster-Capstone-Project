@@ -266,6 +266,61 @@ def assert_on_cpu(module, label: str) -> None:
         )
 
 
+def force_onnx_thread_pool(n_threads: int) -> None:
+    """Make ONNX Runtime respect the core cap. Call BEFORE any session is created.
+
+    THE BUG THIS FIXES, because it produced a plausible-looking false result once.
+    ORT's `intra_op_num_threads` defaults to 0, meaning "choose automatically", and it
+    chooses from the MACHINE's CPU count - not from the process affinity mask. Under a
+    1-core cap it therefore built a 12-thread pool contending for one core, and the first
+    run of these cells reported ONNX as 6.5x slower than PyTorch.
+
+    The giveaway was that the penalty scaled with the cap rather than staying constant:
+    ~6.5x at 1 core, ~2.8x at 6, ~1x at 12 logical. That is the shape of oversubscription,
+    not of a slower engine. A real engine difference does not care how many cores you have.
+
+    Affinity capping IS the right mechanism for PyTorch - measured earlier in this file,
+    set_num_threads and OMP_NUM_THREADS both did nothing while affinity worked - but ORT
+    keeps its own pool and has to be told separately.
+
+    Ultralytics constructs the session as `onnxruntime.InferenceSession(weight,
+    providers=...)` with no session options, so the only injection point is the
+    constructor itself.
+    """
+    import onnxruntime as ort  # noqa: PLC0415
+
+    if getattr(ort.InferenceSession, "_thread_capped", False):
+        return
+    original = ort.InferenceSession
+
+    def capped(*args, **kwargs):
+        if kwargs.get("sess_options") is None and len(args) < 2:
+            options = ort.SessionOptions()
+            options.intra_op_num_threads = n_threads
+            # One stream of work per frame, so inter-op parallelism buys nothing and
+            # would only add threads to contend with the intra-op pool.
+            options.inter_op_num_threads = 1
+            # ORT's worker threads SPIN-WAIT between operators by default rather than
+            # sleeping. On a small model with many short ops that overhead dominates, and
+            # under a core cap the spinning threads consume the very budget the compute
+            # needs. Measured on fast_320 at six cores, everything else held equal:
+            #
+            #     6 threads, spinning on   76.0 ms
+            #     6 threads, spinning off  12.2 ms
+            #     1 thread,  spinning on   21.3 ms
+            #
+            # It is not the shape of the affinity mask: a contiguous [0..5] mask gives the
+            # identical 76.0 ms, so strided pinning is not the cause. Spin-wait is.
+            options.add_session_config_entry("session.intra_op.allow_spinning", "0")
+            kwargs["sess_options"] = options
+        return original(*args, **kwargs)
+
+    capped._thread_capped = True
+    ort.InferenceSession = capped
+    print(f"onnx     : intra_op_num_threads={n_threads}, spin-wait off "
+          f"(ORT otherwise sizes from the machine and spins, costing ~6x)")
+
+
 def assert_onnx_cpu(model, label: str) -> None:
     """Fail loudly if the onnxruntime session bound anything but the CPU provider."""
     try:
@@ -299,6 +354,11 @@ def time_yolo(weights: Path, name_to_cat, imgsz: int, conf: float, frames: list[
     import cv2
 
     from predict_to_coco import load_yolo, yolo_result_to_dets
+
+    # Must precede load_yolo: the session is built during the first predict() and its
+    # options are fixed at construction.
+    if weights.suffix == ".onnx":
+        force_onnx_thread_pool(len(psutil.Process().cpu_affinity()))
 
     model, idx_to_cat = load_yolo(weights, name_to_cat, quiet=True)
     if weights.suffix == ".pt":
