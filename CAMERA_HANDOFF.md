@@ -629,9 +629,45 @@ On a lower-power board these numbers will be **worse**, likely substantially.
     slightly pessimistic relative to the others. Does not affect its latency, which
     disqualifies it regardless.
 
-11. **Val is a single match clip** (clip-level n = 1). All confidence intervals bootstrap
-    over images or frames and do **not** capture across-match variance. Real-world
-    performance on a different venue, lighting, or robot livery is not estimated.
+11. **Val is a single match clip** (clip-level n = 1). All confidence intervals in
+    `results/detection.csv` bootstrap over images *within* that clip and do not capture
+    across-match variance.
+
+    **Now estimated.** `scripts/run_loco.py` trains `fast_640` seven times, holding out
+    each clip in turn (`results/loco.csv`):
+
+    | held-out clip | mAP | armor AP | val imgs |
+    |---|---|---|---|
+    | `-VsHLL_BO2_2` | 0.7213 | 0.3805 | 420 |
+    | `-VsCUBOT_BO2_1` | 0.7040 | 0.3964 | 290 |
+    | `-AresVs-_BO2_2` | 0.6769 | 0.3878 | 420 |
+    | `WMJVs-_BO2_2` | 0.6597 | 0.3586 | 420 |
+    | `-VsRPS_BO2_2` | 0.6562 | 0.3438 | 289 |
+    | `AllianceVsArtisans_BO2_2` | 0.6448 | 0.3046 | 419 |
+    | `-VsBorn-of-Fire_BO2_1` | **0.6148** | 0.3158 | 397 |
+
+    **mAP 0.6682 ± 0.0361, armor AP 0.3554 ± 0.0357** across seven clips.
+
+    Three sources of variation on the same metric, which is the useful comparison:
+
+    | source | mAP |
+    |---|---|
+    | bootstrap 95% CI width, within one split | 0.0116 |
+    | run-to-run, same split, two trainings | 0.0075 |
+    | **across clips (1 sd)** | **0.0361** |
+
+    **Which match you hold out matters roughly three times more than the entire
+    within-split confidence interval, and five times more than retraining.** Every CI in
+    this project measures the smallest of the three. Quote the across-clip figure when
+    claiming what the system would do at an unseen venue.
+
+    **The committed split is the hardest of the seven.** `-VsBorn-of-Fire_BO2_1` scores
+    lowest on mAP, so every headline number in this project is conservative rather than
+    flattering — worth saying explicitly, because the split was chosen for its 85/15
+    ratio, not its difficulty.
+
+    Caveat: fold val sizes range 289-420 images, so per-fold CIs are not equally wide.
+    These are `fast_640` only; the other configs were not cross-validated.
 
 12. **The four-way tracker comparison rests on far less data than the two-way one.**
     `classical` and `sort` have full detector-fed rows on **all 7 clips at 300 frames**
