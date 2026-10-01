@@ -23,6 +23,17 @@ motmetrics==1.4.0     # MOTA / IDF1 / ID switches - the proposal's tracking metr
 scipy==1.18.1         # Hungarian assignment for SORT-style association
 yt-dlp==2026.8.19     # ARC clip acquisition; raw video stays local, never committed
 
+# ONNX export and INT8 quantization (scripts/export_onnx.py). Pinned deliberately:
+# Ultralytics will otherwise pip-install these itself mid-run, and when the export
+# device is CUDA it reaches for onnxruntime-GPU, which shares the onnxruntime namespace
+# and puts CUDA ahead of CPU in the provider order. Every CPU latency row measured after
+# that would be a GPU measurement wearing a CPU label. export_onnx.py passes device="cpu"
+# to prevent it; pinning here is the second line of defence.
+onnx==1.22.0
+onnxruntime==1.30.0   # CPU build. NEVER install onnxruntime-gpu alongside it.
+onnxslim==0.1.96
+py-cpuinfo==9.0.0     # reports VNNI support, which is why INT8 loses on this CPU
+
 # Driver-station GUI (scripts/robot_gui.py). Not needed for any training, evaluation or
 # benchmarking path - the perception work has no GUI dependency.
 PySide6==6.11.2       # Qt desktop UI: live video at frame rate, responsive under load
