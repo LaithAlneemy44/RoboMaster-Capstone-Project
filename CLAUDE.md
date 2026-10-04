@@ -138,19 +138,29 @@ Three things will go wrong in order:
   generated JSON, so they are gitignored — rebuild with
   `python scripts/make_splits.py --from-assignment` after a clone or a move.
 
-### Tracking (video) — biggest hidden cost
-- No labelled RoboMaster tracking dataset exists. Must be BUILT by hand from clips on the
-  ARC Robotics YouTube channel (~267 videos, mostly RoboMaster footage).
-- Manual per-frame bounding box labelling. Decide the annotation format BEFORE labelling
-  (MOT-style / consistent per-frame boxes) so GOTURN and SORT can both consume it.
-- Split: 70/15/15 train/val/test (test set IS used here — evaluates combined models).
-- Start this EARLY and run it in PARALLEL with everything else. It is the real bottleneck,
-  not model training.
+### Tracking (video) — DONE, but read how it was actually built
+- Seven clips from the ARC Robotics YouTube channel, MOT-format, in `data/tracking/`.
+  Frames are gitignored; only `seqinfo.ini`, `gt.txt` and `assignment.csv` are committed.
+- **The ground truth is MACHINE-generated, not hand-labelled.** `scripts/auto_label.py`
+  produced it by motion association. The original plan was manual labelling; that is not
+  what happened, and the difference matters: those labels share assumptions with SORT and
+  the classical tracker and not with appearance-based GOTURN/VitTrack, so **tracking
+  accuracy comparisons are biased toward the Kalman trackers.** CPU timings are
+  unaffected — they need no labels. This is CAMERA_HANDOFF issue 7 and belongs in the
+  write-up's limitations.
+- Split declared in `data/tracking/assignment.csv`: arc03 is val, arc04 is test. It was
+  declared *after* results existed, which is defensible only because nothing is ever
+  fitted to it — no tracker is trained, GOTURN and VitTrack are frozen. It constrains
+  future tuning, not past results (handoff issue 8).
 
 ## Frameworks
 - **Ultralytics** — YOLO training/inference
-- **PyTorch** — underlying DL (install the CUDA build, not CPU-only; verify with
-  `torch.cuda.is_available()`)
+- **PyTorch** — underlying DL. **Which build depends on the machine.** On the Windows
+  desktop install the `cu126` build (the GTX 1060 is Pascal/sm_61 and CUDA 12.8 dropped
+  it) and verify with `torch.cuda.is_available()`. On the MacBook install plain
+  `torch torchvision` — there is no CUDA, and `cuda.is_available()` returning False is
+  correct there, not a fault. Do not "fix" it by reaching for MPS: that is a GPU, and
+  benchmarking on it would invalidate the contribution.
 - **OpenCV + NumPy** — classical detector, classical tracker, GOTURN
 - **Python** end to end
 
