@@ -15,8 +15,9 @@ project measures **CPU-only performance** — the case where no discrete GPU is 
 Keep this framing central; it dictates a lot of the methodology below.
 
 **The motivation wording changed and the write-up must follow.** This clause originally
-read "what actually matters for on-robot deployment". Deployment is now a MacBook tethered
-to the robot over USB, which is neither on-robot nor constrained. The research question is
+read "what actually matters for on-robot deployment". Deployment is now a MacBook that runs
+the pipeline off the robot and sends commands over a WiFi relay, which is neither on-robot
+nor constrained. The research question is
 untouched and still answerable — classical versus deep learning, CPU rather than GPU — but
 say "commodity CPU without a discrete GPU", not "low-power on-robot board". Wording
 problem, not a results problem.
@@ -35,6 +36,10 @@ Two documents carry the detail:
 - **`CAMERA_HANDOFF.md`** — every measured number, 12 numbered open issues, and the
   methodology traps. The authoritative record. Read it before proposing work.
 - **`SETUP_MACOS.md`** — running on the deployment laptop, and what breaks there.
+
+Both predate the current deployment design (see *Deployment architecture*). Where they call
+re-measuring on the MacBook the project's largest open item, read it narrowly: research
+benchmarks stay on the Ryzen, and what the MacBook needs is its own deployed frame rate.
 
 Findings that constrain further work:
 
@@ -76,42 +81,111 @@ Findings that constrain further work:
 
 Roughly 7 combined perception models to compare (excluding parameter-varied configs).
 
-## Hardware — three roles, do not conflate them
+## Hardware — keep the roles separate
 
-- **Windows desktop — training and all existing measurements.** Ryzen 5 5600G (6 physical
-  / 12 logical) plus a GTX 1060 6GB. The GPU trains; the CPU produced every latency, FPS,
-  CPU% and RAM number in `results/`. 6GB VRAM is the limiter — on CUDA OOM, lower batch or
-  image size. **Datasets and most weights live only here.**
-- **Apple Silicon MacBook — the deployment target, and nothing has been measured on it.**
-  Camera on the turret, USB tether, inference on the laptop. ARM64 shares neither the
-  instruction set nor the threading behaviour of the Windows numbers, so **none of the
-  committed performance rows transfer.** Re-measuring here is CAMERA_HANDOFF issue 1, the
-  largest open item in the project.
-- **The robot — does not exist yet.** The serial contract is specified in
-  `docs/ROBOT_PROTOCOL.md` and the driver station speaks it, but nothing has been driven.
+- **Windows desktop — training and research benchmarking.** Ryzen 5 5600G (6 physical /
+  12 logical) plus a GTX 1060 6GB. **Training happens on the GPU, benchmarking on the CPU;
+  never mix them.** The CPU produced every latency, FPS, CPU% and RAM number in
+  `results/`, and benchmarks for the research question still run here, CPU only, with the
+  1/2/4/6-core sweep. 6GB VRAM is the training limiter — on CUDA OOM, lower batch or image
+  size. **Datasets and most weights live only here.**
+- **Apple Silicon MacBook — the live demo platform, not the benchmark platform.** It runs
+  the perception pipeline on its CPU for the demo. ARM64 shares neither the instruction set
+  nor the threading behaviour of the Ryzen, so no committed performance row describes it,
+  and nothing measured on it belongs in the research comparison. What it does need
+  measured is its own deployed frame rate, because the tracker constants depend on it (see
+  *Current status*).
+- **The robot — an Arduino Mega, with no compute board.** Nothing runs perception on the
+  robot. The two Picos only relay commands (see *Deployment architecture*).
 
 **Never benchmark inference on a GPU.** The CPU numbers are the entire contribution.
 `benchmark_cpu.py` now asserts this rather than trusting it: it checks every torch
 parameter is on CPU, and for ONNX it reads back which execution provider the session
 actually bound and refuses to write a row otherwise.
 
+## Deployment architecture (current)
+
+```
+Arducam ──USB-C──▶ MacBook ──USB──▶ Pico A ···WiFi···▶ Pico B ──UART?──▶ Arduino Mega
+                   pipeline,        with the            on the           robot
+                   CPU only         MacBook             robot            firmware
+```
+
+- **The MacBook runs detection and tracking on CPU** and sends turret commands to Pico A
+  over USB.
+- **Pico A and Pico B are Raspberry Pi Pico 2 WH boards that only relay.** Pico A stays
+  with the MacBook; Pico B sits on the robot, receives commands from Pico A over WiFi, and
+  passes them to the Arduino Mega.
+- **No wire between the MacBook and the robot.** Reviewers rejected a direct wired
+  MacBook-to-Arduino link as a risk to the laptop. Do not design anything that connects the
+  MacBook to the robot by wire. Camera-to-MacBook by wire is allowed.
+- **Camera capture on macOS goes through AVFoundation, not V4L2**, and OpenCV capture
+  properties behave differently from Linux. `scripts/robot/camera.py` already drives
+  exposure through `uvc-util` for that reason: `CAP_PROP_EXPOSURE` is unreliable on
+  AVFoundation.
+
+### The camera — confirm which unit is in hand
+
+The design names an **Arducam B0332, colour variant, OV9281 global-shutter sensor**. Those
+do not agree: the B0332 *is* the OV9281 board, and the OV9281 is monochrome only. Arducam's
+colour global-shutter equivalent is the **B0385 (OV9782)**. Check the actual unit before
+relying on colour, because colour is required twice over:
+- the classical detector separates red from blue by hue, and
+- every DL detector, `fast_960` included, was trained on colour ROCO footage, so a
+  monochrome feed would be an untested domain shift for the deployed model too.
+
+Retailer listings for both boards say (confirm with `camera_checkup.py`, not from this
+note): native **1280×800**, not the 1920×1080 every committed number was measured at; high
+frame rates only in **MJPG** (YUY2 is about 10 fps at full resolution), so expect a decode
+per frame; a 70° horizontal M12 lens; and **no IR-cut filter**, so check hue rendering under
+arena lighting before trusting the classical detector's colour bands.
+
+`camera_checkup.py` compares a clicked plate against the 25×22 px training median, which was
+measured at 1920×1080. Both frames are resized to the same network input, so at 1280×800
+the equivalent median is about 17×15 px. Scale before reading its verdict.
+
+### Robot control link — open decisions
+
+None of these is decided. **Do not pick defaults for them silently; flag them wherever code
+depends on them.**
+
+1. Wire protocol between the MacBook and Pico A — likely USB serial.
+2. Protocol between the two Picos over WiFi (e.g. UDP vs TCP), and which Pico hosts the
+   network.
+3. Interface between Pico B and the Arduino Mega — likely UART. The Pico is 3.3 V logic and
+   the Mega 5 V, so the voltage on the Mega TX → Pico RX line must be checked.
+4. Command message format (e.g. pitch/yaw angles plus a fire flag), and how stale or
+   dropped commands are handled.
+5. Where the camera is mounted — on the turret (cabled to the MacBook) or fixed off the
+   robot. The design does not say. `aiming.py` steers on pixel error from the image centre,
+   which only works if the camera moves with the turret.
+
+**Code already depends on items 1 and 4, through a draft written before the relay existed.**
+`docs/ROBOT_PROTOCOL.md` and `scripts/robot/protocol.py` specify a single serial hop from
+host to robot microcontroller: 115200 8N1 ASCII lines (`DRV`, `GIM`, `FIRE`, `INTAKE`,
+`STOP`, `PING`), turret commands as *rates* rather than angles because the host has no
+encoder feedback, and a firmware rule to stop all motion after 300 ms of silence.
+`driver.py`, `aiming.py` and the GUI all speak it, and `SerialDriver` would open Pico A's
+USB port unchanged. Treat it as a proposal, not a contract: whether it survives the relay,
+rates versus angles, and which hop enforces the 300 ms stop are exactly items 1–4.
+
 ### On the MacBook specifically
 
 A fresh clone there has the code, `fast_640` and `fast_960`, and a test clip. It does
-**not** have `Datasets/`, the tracking clip frames, or any other weights — so training,
-accuracy scoring and the benchmark grid cannot run there. The camera test can. See
-`SETUP_MACOS.md`.
+**not** have `Datasets/`, the tracking clip frames, or any other weights — so training and
+accuracy scoring cannot run there, and the research benchmark grid does not belong there.
+The camera test can run. See `SETUP_MACOS.md`.
 
 Three things will go wrong in order:
 1. **`requirements.txt` says to install torch from the `cu126` index.** That is correct
    for the Windows machine and wrong on Apple Silicon. Install plain `torch torchvision`.
 2. **macOS blocks camera access silently.** `cv2.VideoCapture` returns a handle that reads
    nothing, with no error, until Terminal has Camera permission in System Settings.
-3. **`psutil.cpu_affinity()` does not exist on Darwin**, so the core-capped grid refuses
-   to run. Use `--no-core-cap`, which records `core_constraint=none` so those rows can
-   never be averaged with affinity-capped ones. Apple Silicon cores are also
-   heterogeneous, so a bare core count is meaningless there — `taskpolicy -b` gives a
-   two-point comparison, not a 1/2/4/6 sweep.
+3. **`psutil.cpu_affinity()` does not exist on Darwin**, so `benchmark_cpu.py`'s
+   core-capped grid refuses to run. If you time the pipeline there with it, use
+   `--no-core-cap`, which records `core_constraint=none`. Those rows describe the demo
+   machine: they are never research rows and never averaged with the Ryzen's. Apple
+   Silicon cores are heterogeneous, so a bare core count means nothing there anyway.
 
 ## Dataset
 
@@ -164,6 +238,24 @@ Three things will go wrong in order:
 - **OpenCV + NumPy** — classical detector, classical tracker, GOTURN
 - **Python** end to end
 
+## Current status
+
+- **Camera capture code exists, but has never run against a real camera.**
+  `scripts/robot/vision.py` (`FrameSource`) and `scripts/robot/camera_checkup.py` open
+  devices with a plain `cv2.VideoCapture(index)`, which the standard opencv-python build
+  resolves to AVFoundation on macOS. Nothing requests `cv2.CAP_AVFOUNDATION` explicitly
+  or sets this camera's MJPG format and 1280×800 mode. The next software step is bringing
+  that code up against the Arducam on the MacBook and hardening it, not writing a second
+  capture path beside it.
+- **Tracker parameters are hard-coded for 30 fps** and need re-tuning once the deployed
+  frame rate on the MacBook is measured. `run_trackers.rescale_temporal()` already rescales
+  `max_age`/`min_hits` by frame stride; the GUI's `vision.AutoTracker` does not call it.
+  Every tracker score so far was on whole robots, while the GUI tracks armor plates.
+- **The Picos will not arrive before the October 2026 prototype showing.** That demo does
+  not use the vision system: it runs a scripted move, rotate, shoot and collect routine
+  coded into the Arduino Mega firmware and started on power-up. That firmware is not in
+  this repo.
+
 ## Priorities / order of work
 
 The original plan — verify data, confirm the GPU, build the measurement harness before
@@ -173,21 +265,25 @@ why every model goes through one evaluator rather than its own.
 
 What is actually open, roughly in order of value:
 
-1. **Re-measure on the MacBook.** Nothing has been. It is the deployment target and no
-   committed number applies to it. Start with the camera test in `SETUP_MACOS.md`, then
-   the benchmark grid with `--no-core-cap`.
-2. **The camera.** Plate pixel size at real engagement distance is the measurement that
-   decides whether detection can work at all — `scripts/robot/camera_checkup.py` takes it.
-   Capture cost is still "not measured" everywhere in the handoff.
+1. **Camera bring-up on the MacBook.** Confirm the unit is colour, then run
+   `scripts/robot/camera_checkup.py`: negotiated format, delivered frame rate, capture
+   latency, and plate pixel size at real engagement distance — the measurement that
+   decides whether detection can work at all. Capture cost is still "not measured"
+   everywhere in the handoff.
+2. **The deployed frame rate**, measured on the MacBook with the real camera, then the
+   tracker constants re-tuned for it (see *Current status*).
 3. **The exposure lock is untested code.** `scripts/robot/camera.py` was written against
    documentation and has never run against hardware. Its control names need confirming on
    the real unit and its exposure value needs tuning once against arena lighting.
 4. **Confidence threshold is hardcoded 0.25 in six files and was never swept** — that is
    the live system's operating point, and it is unexplored (handoff issue 9).
-5. Remaining smaller gaps are enumerated as the 12 numbered issues in `CAMERA_HANDOFF.md`.
+5. **The robot control link** — the open decisions under *Deployment architecture*. Blocked
+   until the Picos arrive, and not to be settled by default in code.
+6. Remaining smaller gaps are enumerated as the 12 numbered issues in `CAMERA_HANDOFF.md`.
 
 **Finish measurement before adding models.** The comparison is already broad enough to
-answer the research question; what it lacks is a number on the hardware it will run on.
+answer the research question, and its numbers are complete on the benchmark platform.
+What the demo lacks is a working camera and a frame rate on the MacBook.
 
 ## Known traps (do not repeat)
 - **Never train GOTURN from scratch** — semester-eating. Pretrained + light fine-tune only.
