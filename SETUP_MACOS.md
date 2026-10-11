@@ -1,9 +1,14 @@
 # Running this on the MacBook
 
-The deployment target is an Apple Silicon MacBook. Everything in this repo was built and
-measured on an x86 Windows desktop, so this is a first run on new hardware, not a copy of
-a working setup. Expect a surprise or two and read the "known differences" section before
-concluding something is broken.
+The MacBook is the live demo platform. It runs the perception pipeline on its CPU, takes
+the camera over USB-C, and — once the Pico boards arrive — commands the robot through a
+WiFi relay (Pico A on USB here, Pico B on the robot, then the Arduino Mega). **Never wire
+the MacBook to the robot.** It is not the benchmark platform: research numbers stay on
+the Windows desktop.
+
+Everything in this repo was built and measured on that x86 Windows desktop, so this is a
+first run on new hardware, not a copy of a working setup. Expect a surprise or two and
+read the "known differences" section before concluding something is broken.
 
 ## 1. Clone and create the environment
 
@@ -49,6 +54,16 @@ This reports the negotiated pixel format, the **delivered** frame rate against t
 claimed one, capture latency and jitter, and whether exposure can be locked. All of it is
 information the project does not yet have for any real camera.
 
+Three things to check about the Arducam specifically:
+
+- **Is it actually colour?** The B0332 is the *monochrome* OV9281 board; the colour one is
+  the B0385 (OV9782). If the preview is grey, stop: the classical detector needs hue, and
+  every DL model was trained on colour footage.
+- **Expect 1280×800 and MJPG.** Per retailer listings, high frame rates come only in MJPG
+  (YUY2 is about 10 fps at full resolution), so a per-frame decode is part of the cost.
+- **Scale the plate verdict.** The plate check compares against a 25×22 px median taken at
+  1920×1080. At 1280×800 the equivalent is about 17×15 px.
+
 ## 5. The camera test, with no robot
 
 Play `results/test_footage.mp4` fullscreen (10 seconds of real match footage, loops
@@ -61,6 +76,10 @@ python scripts/robot_gui.py --driver mock --source 0 \
 
 Press **T** for auto-tracking. Green boxes on the robots means camera, model, tracker and
 display all work end to end.
+
+Keep `--driver mock` until the Picos exist. The serial driver will eventually open Pico A's
+USB port (it shows up as `/dev/cu.usbmodem…`), but the protocol across the relay is not
+decided yet — see the open decisions in `CLAUDE.md`.
 
 **This proves the plumbing, not the optics.** A robot on a screen is a different angular
 size than a robot across an arena, so do not read anything into detection quality here.
@@ -105,16 +124,17 @@ or `data/roco_central.yaml`, run `python scripts/make_splits.py --from-assignmen
 it needs `Datasets/` present.
 
 **`psutil.cpu_affinity()` does not exist on macOS.** `benchmark_cpu.py` will refuse to run
-its core-capped grid and tell you so. Use `--no-core-cap`, which records
-`core_constraint=none` so those rows can never be averaged with the affinity-capped
-Windows ones. For an efficiency-core figure, wrap the command in `taskpolicy -b`. That
-gives a two-point comparison, not a 1/2/4/6 sweep — Apple Silicon cores are heterogeneous
-and a bare core count is meaningless there.
+its core-capped grid and tell you so. If you use it to time the pipeline here, pass
+`--no-core-cap`, which records `core_constraint=none` so those rows can never be averaged
+with the affinity-capped Windows ones. Apple Silicon cores are heterogeneous, so a bare
+core count means nothing here anyway.
 
-**Nothing measured here is comparable to the committed numbers.** Different instruction
-set, different BLAS, different threading. Re-measuring on this machine is the single
-largest open item in the project (CAMERA_HANDOFF.md issue 1), and the results belong in
-their own rows, not merged with the Windows ones.
+**Nothing measured here is comparable to the committed numbers, and it is not meant to
+be.** Different instruction set, different BLAS, different threading. The research
+benchmarks stay on the Windows desktop; this machine is not a benchmark platform. What
+does need measuring here is the **deployed frame rate with the real camera**, because the
+tracker constants count frames and were set for 30 fps (CAMERA_HANDOFF.md issues 1 and
+5). Keep those results in their own rows, never merged with the Windows ones.
 
 **ONNX INT8 may behave differently.** It loses on this project's Zen 3 desktop because
 that CPU has AVX2 but no VNNI, so INT8 gets no hardware acceleration. Apple Silicon's

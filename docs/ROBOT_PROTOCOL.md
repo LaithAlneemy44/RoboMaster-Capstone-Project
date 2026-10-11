@@ -1,5 +1,12 @@
 # Robot serial protocol
 
+> **Status: draft, written before the Pico relay design.** The link is now MacBook → Pico A
+> (USB) → WiFi → Pico B → Arduino Mega, and the MacBook is never wired to the robot. Which
+> parts of this document survive that is undecided: the transport on each hop, the message
+> format (turret *rates* here, versus angles), and which hop enforces the 300 ms stop. Those
+> are open decisions listed in `CLAUDE.md`. `protocol.py` and the GUI implement this draft;
+> treat it as a proposal until they are settled.
+
 Contract between the driver-station GUI (`scripts/robot_gui.py`) and the robot's
 microcontroller. Written for whoever implements the firmware side.
 

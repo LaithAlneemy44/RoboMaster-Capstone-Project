@@ -140,6 +140,10 @@ frame rates only in **MJPG** (YUY2 is about 10 fps at full resolution), so expec
 per frame; a 70° horizontal M12 lens; and **no IR-cut filter**, so check hue rendering under
 arena lighting before trusting the classical detector's colour bands.
 
+That lens gives about 18 px/degree, so plates come out about 0.70× the size the earlier
+C270 choice would give at the same distance — and plate size is what armor detection
+lives on (CAMERA_HANDOFF §4). A narrower M12 lens is the cheap fix if plates measure small.
+
 `camera_checkup.py` compares a clicked plate against the 25×22 px training median, which was
 measured at 1920×1080. Both frames are resized to the same network input, so at 1280×800
 the equivalent median is about 17×15 px. Scale before reading its verdict.

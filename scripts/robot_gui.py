@@ -1,25 +1,29 @@
 """Driver station for the robot: video, manual control, and automatic tracking.
 
-Runs on the OPERATOR'S laptop, not on the robot. Control goes out over a serial port;
-video arrives separately, because a 115200-baud link cannot carry it.
+Runs on the MacBook, not on the robot - the robot has no compute board. Commands go out
+over a serial port to Pico A, which relays them over WiFi to Pico B on the robot and on to
+the Arduino Mega. The MacBook is never wired to the robot. Video arrives separately,
+straight from the camera over USB.
 
-"Serial" here means a port, not a cable: a direct USB lead, a Bluetooth SPP pairing and a
-2.4 GHz radio dongle all enumerate the same way, so bench testing and competition use run
-identical code.
+THE LINK PROTOCOL IS NOT SETTLED
+    Messages follow docs/ROBOT_PROTOCOL.md, which was written before the Pico relay. The
+    MacBook-to-Pico transport, the Pico-to-Pico protocol, the command format and how stale
+    commands are handled are all open decisions (see CLAUDE.md). Use --driver mock until
+    the Picos exist.
 
 WHAT AUTO-TRACK IS, AND IS NOT
-    The tracker runs HERE, on the laptop, because this is where the frames are. That makes
-    this a driver station, not the on-robot deployment the project's CPU benchmarks
-    describe - those say what this pipeline would cost on the robot's own board. Auto-track
-    aims the turret. It never fires.
+    The tracker runs HERE, on the laptop's CPU, because this is where the frames are. The
+    project's CPU benchmarks were measured on the Windows desktop and do not describe this
+    machine; the frame rate shown in the window is the one that applies. Auto-track aims
+    the turret. It never fires.
 
 Usage:
     # no hardware needed - a recorded clip and a simulated robot
     python scripts/robot_gui.py --driver mock \\
         --source data/tracking/arc02/img1/%06d.jpg
 
-    # real robot, webcam or capture device
-    python scripts/robot_gui.py --driver serial --port COM3 --source 0
+    # through Pico A, once the relay exists (find the port with --list-ports)
+    python scripts/robot_gui.py --driver serial --port /dev/cu.usbmodem1101 --source 0
 
     # everything except the window, for CI or a headless check
     python scripts/robot_gui.py --driver mock --source 0 --check
@@ -45,7 +49,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--driver", choices=("mock", "serial"), default="mock",
                         help="'mock' needs no hardware and logs every command.")
     parser.add_argument("--port", default=None,
-                        help="Serial port, e.g. COM3 or /dev/ttyUSB0.")
+                        help="Pico A's serial port, e.g. /dev/cu.usbmodem1101 on macOS.")
     parser.add_argument("--source", default="0",
                         help="Device index, stream URL, or clip such as "
                              "data/tracking/arc02/img1/%%06d.jpg")

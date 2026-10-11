@@ -31,30 +31,30 @@ physical** cores. Two notes that matter if you re-measure:
   "2 cores" means two physical cores, not one core's two threads. 6 cores + SMT
   measured *slower* than 6 physical cores (811 vs 710 ms on Faster R-CNN).
 
-**SETTLED — there is no on-robot board.** The camera mounts on the turret and runs down a
-USB tether to an **Apple Silicon MacBook**, which does the inference. That closes the
+**SETTLED — there is no on-robot compute.** The camera plugs into an **Apple Silicon
+MacBook** over USB-C, and the MacBook runs the pipeline on its CPU for the live demo. It
+commands the robot through a relay: Pico A on USB at the MacBook, WiFi to Pico B on the
+robot, then on to the robot's Arduino Mega. **The MacBook is never wired to the robot** —
+reviewers rejected that as a risk to the laptop. The Picos only relay. That closes the
 board-selection question and makes power, brownout protection and cooling non-issues.
 
-It replaces them with three sharper ones.
+**The two machines have separate jobs; keep them separate.** The Ryzen above is the
+research benchmark platform: CPU only, 1/2/4/6-core sweep, and the numbers in this
+document are the research result. The MacBook is the demo platform, not a benchmark
+platform. ARM64 shares neither the instruction set nor the threading behaviour, so none
+of these rows describes the MacBook — and nothing measured on the MacBook joins the
+research comparison either.
 
-**Every number in this repo is x86 Zen 3 on Windows and none of it transfers.** ARM64 is a
-different instruction set with a different BLAS and different threading behaviour. All 140
-performance rows and 108 tracking rows need re-measuring on the laptop before any of them
-can be quoted about the deployed system.
-
-**The core-scaling study cannot be reproduced there as written**, for two independent
-reasons. `psutil.cpu_affinity()` does not exist on macOS — Darwin exposes no userspace
-core-pinning API — and Apple Silicon cores are *heterogeneous*, so the 1/2/4/6 sweep has
-no meaning on it anyway: four performance cores and four efficiency cores differ by
-roughly threefold. `benchmark_cpu.py` now takes `--no-core-cap` and records the mechanism
-in a `core_constraint` column, so an unconstrained macOS row can never be silently
-averaged with an affinity-capped Windows one. For an efficiency-core figure, wrap the
-command in `taskpolicy -b`. That yields a two-point comparison, not a sweep, and the
-write-up should say so.
+**What does need measuring on the MacBook is the deployed frame rate**, with the real
+camera. The trackers count frames, not seconds (§5), so their constants have to be
+re-tuned for whatever rate the demo actually achieves. If `benchmark_cpu.py` is used for
+that, note that `psutil.cpu_affinity()` does not exist on macOS, so pass `--no-core-cap`;
+the `core_constraint` column then records `none`, and those rows can never be silently
+averaged with the affinity-capped Ryzen ones.
 
 **The framing in CLAUDE.md no longer matches the deployment.** It motivates the project as
 *"CPU-constrained performance, which is what actually matters for on-robot deployment"*. A
-tethered MacBook is neither on-robot nor constrained — an M-series performance core is
+MacBook off the robot is neither on-robot nor constrained — an M-series performance core is
 likely *faster* than the Zen 3 core these numbers came from, so results may improve rather
 than degrade. The research question is untouched and still answerable: classical versus
 deep learning, CPU rather than GPU. But the motivating clause needs rewording before the
@@ -367,11 +367,18 @@ Runs at **native resolution, no resize**. Inside `detect()`:
 
 ### Camera choice: colour required, global shutter not
 
+**The chosen camera is an Arducam global-shutter USB board, and which one is unconfirmed.**
+The design names an "Arducam B0332, colour variant, OV9281". Those do not agree: the B0332
+*is* the OV9281 board, and the OV9281 is monochrome only. Arducam's colour equivalent is
+the **B0385 (OV9782)**. Check the unit in hand before anything below is relied on.
+
 **Colour is not optional.** The classical detector's gate leads with brightness and uses
 hue only to *separate red team from blue* (`RED_BANDS` / `BLUE_BAND`). On a mono sensor it
 would still find plates and lose all friend-or-foe discrimination — and nothing else in
 the project supplies it, because ROCO's classes are `{armor, base, car, ignore, watcher}`
-with no team dimension. **Every DL model here is team-blind by construction.**
+with no team dimension. **Every DL model here is team-blind by construction.** The DL
+models need colour for a different reason: every one was trained on colour footage, so a
+monochrome feed would be an untested domain shift for `fast_960` too.
 
 **Global shutter buys nothing measurable.** The training data is rolling shutter
 throughout (ROCO match recordings, YouTube clips), the pipeline runs at 6–35 FPS so high
@@ -382,14 +389,30 @@ median 25 × 22 px:
 
 | camera | resolution | horizontal FOV | px/degree |
 |---|---|---|---|
-| Logitech C270 (chosen) | 1280×720 | ~49° (55° diag) | **26.1** |
+| Logitech C270 (earlier choice) | 1280×720 | ~49° (55° diag) | **26.1** |
 | typical 1080p "wide" webcam | 1920×1080 | ~90° | 21.3 |
+| Arducam B0332 / B0385, stock lens (now chosen) | 1280×800 | ~70° | 18.3 |
 
 A 720p narrow lens beats a 1080p wide one on the number that counts. Widening the FOV 2×
 is geometrically identical to halving the network input, and that step is measured here:
 `fast_640` → `fast_320` takes armor AP **0.2943 → 0.0068**, a 43-fold collapse, while mAP
 only falls 0.61 → 0.50 because the large classes survive. **A wide lens costs armor
 specifically** — the class the whole system aims at.
+
+**The Arducam's stock lens is the weakest row in that table.** At the same distance, its
+plates come out about 0.70× the size the C270 would give (18.3 / 26.1), and both are scaled
+by the same factor on the way into a 960 px network. The resolution and FOV are retailer
+listing figures, not measurements. The lens is a standard M12 mount, so a narrower M12
+lens is the cheap fix if `camera_checkup.py` shows plates too small at engagement distance.
+
+Two more listing figures to confirm on the unit: high frame rates are **MJPG only** (YUY2
+is about 10 fps at 1280×800, below the pipeline's rate), so expect to pay a decode per
+frame; and there is **no IR-cut filter**, so check hue rendering under arena lighting
+before trusting the classical detector's colour bands.
+
+`camera_checkup.py` compares a clicked plate against the 25×22 px training median, which
+was measured at 1920×1080. At 1280×800 the equivalent median is about **17×15 px**, because
+both frame widths are resized to the same network input. Scale before reading its verdict.
 
 ### Exposure must be locked, and macOS cannot use v4l2-ctl
 
@@ -546,7 +569,8 @@ that entire set is **`yolo_320` at 0.0448** — against `fast_960`'s 0.4537, a 1
 Put plainly: on this hardware you can have 30 FPS or you can detect armor plates, not
 both.
 
-On a lower-power board these numbers will be **worse**, likely substantially.
+These describe the Ryzen, not the MacBook the demo runs on, in either direction. The
+MacBook's own frame rate is **not measured**.
 
 ### What caps camera resolution and FPS
 
@@ -569,13 +593,14 @@ On a lower-power board these numbers will be **worse**, likely substantially.
 
 **Ordered by how much they could change hardware-phase decisions.**
 
-1. **The deployment target is an Apple Silicon MacBook, and nothing has been measured on
-   it.** The board question is settled - camera on the turret, USB tether, inference on
-   the laptop - which retires power, cooling and brownout risk entirely. What replaces it
-   is larger: every performance row here is x86 Zen 3 on Windows, ARM64 macOS shares
-   neither the instruction set nor the threading behaviour, and `cpu_affinity` does not
-   exist on Darwin, so the core-scaling methodology needs replacing rather than porting.
-   `--no-core-cap` and the `core_constraint` column exist for this; see section 1.
+1. **The demo runs on an Apple Silicon MacBook, and its frame rate has not been measured.**
+   The board question is settled — camera into the MacBook, inference on its CPU, commands
+   to the robot through the Pico relay, no wire between MacBook and robot — which retires
+   power, cooling and brownout risk entirely. The research benchmarks are **not** what
+   needs redoing: they stay on the Ryzen with the 1/2/4/6 sweep, and the MacBook is not a
+   benchmark platform. What is missing is the MacBook's deployed frame rate with the real
+   camera, which the tracker constants depend on (issue 5) and which is the number the
+   demo will actually run at. See section 1.
    **Superseded, retained for context:** All numbers are
    Ryzen 5 5600G with affinity caps. The project's stated contribution is CPU-constrained
    measurement on a representative competition CPU; that CPU has not been selected.
@@ -596,7 +621,9 @@ On a lower-power board these numbers will be **worse**, likely substantially.
    frames is kinder to a frame-counting tracker than a variable one. What is still
    **unmeasured** is capture cost: every latency figure here excludes JPEG decode and no
    camera has ever been attached, so the capture→inference handoff has no number.
-   `scripts/robot/camera_checkup.py` exists to collect exactly that on camera day.
+   `scripts/robot/camera_checkup.py` exists to collect exactly that on camera day. Nothing
+   yet requests the AVFoundation backend or the Arducam's MJPG 1280×800 mode explicitly;
+   both open the device with a plain `cv2.VideoCapture(index)`.
 
 4. **The classical detector detects armor plates, not robot chassis.** Its `detect()`
    returns boxes labelled `"armor"` only. When it feeds the tracker, the tracker is
