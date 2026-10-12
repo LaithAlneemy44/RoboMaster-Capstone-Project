@@ -257,8 +257,11 @@ Three things will go wrong in order:
   Every tracker score so far was on whole robots, while the GUI tracks armor plates.
 - **The Picos will not arrive before the October 2026 prototype showing.** That demo does
   not use the vision system: it runs a scripted move, rotate, shoot and collect routine
-  coded into the Arduino Mega firmware and started on power-up. That firmware is not in
-  this repo.
+  coded into the Arduino Mega firmware and started on power-up. That sketch is
+  `firmware/demo_routine/demo_routine.ino`: it builds for the Mega and for an Uno (the
+  drive test board), picking the pin set at compile time. Every pin is still a placeholder,
+  and the collector and shooter are switched off until the subsystem owners' own sketches
+  are merged in.
 
 ## Priorities / order of work
 
