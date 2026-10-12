@@ -54,15 +54,15 @@ This reports the negotiated pixel format, the **delivered** frame rate against t
 claimed one, capture latency and jitter, and whether exposure can be locked. All of it is
 information the project does not yet have for any real camera.
 
-Three things to check about the Arducam specifically:
+Three things to check about the C270 specifically:
 
-- **Is it actually colour?** The B0332 is the *monochrome* OV9281 board; the colour one is
-  the B0385 (OV9782). If the preview is grey, stop: the classical detector needs hue, and
-  every DL model was trained on colour footage.
-- **Expect 1280×800 and MJPG.** Per retailer listings, high frame rates come only in MJPG
-  (YUY2 is about 10 fps at full resolution), so a per-frame decode is part of the cost.
+- **It is USB-A.** A USB-C-only MacBook needs an adapter or hub; prefer a direct adapter over
+  a busy hub, since the C270 is USB 2.0 and shares a hub's bandwidth with everything on it.
+- **Expect 1280×720 and MJPG.** 30 fps is the ceiling and is commonly reached at 720p only
+  in MJPG, so a per-frame decode is part of the cost. Check the delivered rate, not the
+  claimed one.
 - **Scale the plate verdict.** The plate check compares against a 25×22 px median taken at
-  1920×1080. At 1280×800 the equivalent is about 17×15 px.
+  1920×1080. At 1280×720 the equivalent is about 17×15 px.
 
 ## 5. The camera test, with no robot
 

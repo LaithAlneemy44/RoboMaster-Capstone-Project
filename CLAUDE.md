@@ -106,7 +106,7 @@ actually bound and refuses to write a row otherwise.
 ## Deployment architecture (current)
 
 ```
-Arducam ──USB-C──▶ MacBook ──USB──▶ Pico A ···WiFi···▶ Pico B ──UART?──▶ Arduino Mega
+C270 ─────USB────▶ MacBook ──USB──▶ Pico A ···WiFi···▶ Pico B ──UART?──▶ Arduino Mega
                    pipeline,        with the            on the           robot
                    CPU only         MacBook             robot            firmware
 ```
@@ -124,28 +124,28 @@ Arducam ──USB-C──▶ MacBook ──USB──▶ Pico A ···WiFi···�
   exposure through `uvc-util` for that reason: `CAP_PROP_EXPOSURE` is unreliable on
   AVFoundation.
 
-### The camera — confirm which unit is in hand
+### The camera — Logitech C270 HD
 
-The design names an **Arducam B0332, colour variant, OV9281 global-shutter sensor**. Those
-do not agree: the B0332 *is* the OV9281 board, and the OV9281 is monochrome only. Arducam's
-colour global-shutter equivalent is the **B0385 (OV9782)**. Check the actual unit before
-relying on colour, because colour is required twice over:
+The camera is a **Logitech C270 HD webcam**. It replaces an earlier design note that named an
+Arducam global-shutter board; ignore any Arducam, OV9281, M12 or 1280×800 references left in
+older commits. The C270 is a colour sensor, which matters twice over:
 - the classical detector separates red from blue by hue, and
-- every DL detector, `fast_960` included, was trained on colour ROCO footage, so a
-  monochrome feed would be an untested domain shift for the deployed model too.
+- every DL detector, `fast_960` included, was trained on colour ROCO footage.
 
-Retailer listings for both boards say (confirm with `camera_checkup.py`, not from this
-note): native **1280×800**, not the 1920×1080 every committed number was measured at; high
-frame rates only in **MJPG** (YUY2 is about 10 fps at full resolution), so expect a decode
-per frame; a 70° horizontal M12 lens; and **no IR-cut filter**, so check hue rendering under
-arena lighting before trusting the classical detector's colour bands.
+Spec-sheet figures (confirm with `camera_checkup.py`, not from this note): native
+**1280×720**, not the 1920×1080 every committed number was measured at, but the same 16:9
+aspect, so frames letterbox exactly like the training data; **30 fps** maximum, and
+commonly only in **MJPG** (uncompressed YUY2 at 720p is usually well under that), so expect
+a decode per frame; rolling shutter; fixed focus; 55° diagonal, about 49° horizontal.
+It is **USB-A, USB 2.0**, so a USB-C MacBook needs an adapter or hub.
 
-That lens gives about 18 px/degree, so plates come out about 0.70× the size the earlier
-C270 choice would give at the same distance — and plate size is what armor detection
-lives on (CAMERA_HANDOFF §4). A narrower M12 lens is the cheap fix if plates measure small.
+That FOV gives about 26 px/degree — the best of the options the handoff compared
+(CAMERA_HANDOFF §4), and plate size is what armor detection lives on. The lens is fixed, so
+if plates still measure small at engagement distance there is no cheap lens swap; the
+levers are the network input size and cropping.
 
 `camera_checkup.py` compares a clicked plate against the 25×22 px training median, which was
-measured at 1920×1080. Both frames are resized to the same network input, so at 1280×800
+measured at 1920×1080. Both frames are resized to the same network input, so at 1280×720
 the equivalent median is about 17×15 px. Scale before reading its verdict.
 
 ### Robot control link — open decisions
@@ -248,8 +248,8 @@ Three things will go wrong in order:
   `scripts/robot/vision.py` (`FrameSource`) and `scripts/robot/camera_checkup.py` open
   devices with a plain `cv2.VideoCapture(index)`, which the standard opencv-python build
   resolves to AVFoundation on macOS. Nothing requests `cv2.CAP_AVFOUNDATION` explicitly
-  or sets this camera's MJPG format and 1280×800 mode. The next software step is bringing
-  that code up against the Arducam on the MacBook and hardening it, not writing a second
+  or sets this camera's MJPG format and 1280×720 mode. The next software step is bringing
+  that code up against the C270 on the MacBook and hardening it, not writing a second
   capture path beside it.
 - **Tracker parameters are hard-coded for 30 fps** and need re-tuning once the deployed
   frame rate on the MacBook is measured. `run_trackers.rescale_temporal()` already rescales
@@ -269,7 +269,7 @@ why every model goes through one evaluator rather than its own.
 
 What is actually open, roughly in order of value:
 
-1. **Camera bring-up on the MacBook.** Confirm the unit is colour, then run
+1. **Camera bring-up on the MacBook.** Plug in the C270, then run
    `scripts/robot/camera_checkup.py`: negotiated format, delivered frame rate, capture
    latency, and plate pixel size at real engagement distance — the measurement that
    decides whether detection can work at all. Capture cost is still "not measured"

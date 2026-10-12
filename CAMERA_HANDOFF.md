@@ -367,10 +367,9 @@ Runs at **native resolution, no resize**. Inside `detect()`:
 
 ### Camera choice: colour required, global shutter not
 
-**The chosen camera is an Arducam global-shutter USB board, and which one is unconfirmed.**
-The design names an "Arducam B0332, colour variant, OV9281". Those do not agree: the B0332
-*is* the OV9281 board, and the OV9281 is monochrome only. Arducam's colour equivalent is
-the **B0385 (OV9782)**. Check the unit in hand before anything below is relied on.
+**The camera is a Logitech C270 HD webcam** — colour, rolling shutter, fixed-focus. An
+interim design note named an Arducam global-shutter board (B0332 / OV9281); that is no longer
+the plan, and the C270 is what is in hand.
 
 **Colour is not optional.** The classical detector's gate leads with brightness and uses
 hue only to *separate red team from blue* (`RED_BANDS` / `BLUE_BAND`). On a mono sensor it
@@ -380,18 +379,19 @@ with no team dimension. **Every DL model here is team-blind by construction.** T
 models need colour for a different reason: every one was trained on colour footage, so a
 monochrome feed would be an untested domain shift for `fast_960` too.
 
-**Global shutter buys nothing measurable.** The training data is rolling shutter
-throughout (ROCO match recordings, YouTube clips), the pipeline runs at 6–35 FPS so high
-frame rates are unusable, and motion blur is driven by exposure *time*, not shutter type.
+**Global shutter would have bought nothing measurable**, so dropping the Arducam costs
+nothing. The training data is rolling shutter throughout (ROCO match recordings, YouTube
+clips), the pipeline runs at 6–35 FPS so high frame rates are unusable, and motion blur is
+driven by exposure *time*, not shutter type.
 
 **What does matter is pixels per degree**, since armor plates are the binding constraint at
 median 25 × 22 px:
 
 | camera | resolution | horizontal FOV | px/degree |
 |---|---|---|---|
-| Logitech C270 (earlier choice) | 1280×720 | ~49° (55° diag) | **26.1** |
+| **Logitech C270 (chosen)** | 1280×720 | ~49° (55° diag) | **26.1** |
 | typical 1080p "wide" webcam | 1920×1080 | ~90° | 21.3 |
-| Arducam B0332 / B0385, stock lens (now chosen) | 1280×800 | ~70° | 18.3 |
+| Arducam B0332 / B0385, stock lens (considered, dropped) | 1280×800 | ~70° | 18.3 |
 
 A 720p narrow lens beats a 1080p wide one on the number that counts. Widening the FOV 2×
 is geometrically identical to halving the network input, and that step is measured here:
@@ -399,19 +399,20 @@ is geometrically identical to halving the network input, and that step is measur
 only falls 0.61 → 0.50 because the large classes survive. **A wide lens costs armor
 specifically** — the class the whole system aims at.
 
-**The Arducam's stock lens is the weakest row in that table.** At the same distance, its
-plates come out about 0.70× the size the C270 would give (18.3 / 26.1), and both are scaled
-by the same factor on the way into a 960 px network. The resolution and FOV are retailer
-listing figures, not measurements. The lens is a standard M12 mount, so a narrower M12
-lens is the cheap fix if `camera_checkup.py` shows plates too small at engagement distance.
+**The C270 is the strongest row in that table.** Its plates come out about 1.4× the size
+the Arducam's stock lens would have given at the same distance (26.1 / 18.3). The resolution
+and FOV are spec-sheet figures, not measurements. The lens is fixed, so if
+`camera_checkup.py` shows plates too small at engagement distance there is no lens swap —
+the remaining levers are network input size and cropping.
 
-Two more listing figures to confirm on the unit: high frame rates are **MJPG only** (YUY2
-is about 10 fps at 1280×800, below the pipeline's rate), so expect to pay a decode per
-frame; and there is **no IR-cut filter**, so check hue rendering under arena lighting
-before trusting the classical detector's colour bands.
+Two more spec-sheet points to confirm on the unit: 30 fps is the ceiling and is commonly
+reached at 720p only in **MJPG** (uncompressed YUY2 at 1280×720 typically runs well below
+it), so expect to pay a decode per frame; and its **16:9** aspect matches the 1920×1080
+training footage, so letterboxing is unchanged. It is USB-A / USB 2.0, so a USB-C MacBook
+needs an adapter.
 
 `camera_checkup.py` compares a clicked plate against the 25×22 px training median, which
-was measured at 1920×1080. At 1280×800 the equivalent median is about **17×15 px**, because
+was measured at 1920×1080. At 1280×720 the equivalent median is about **17×15 px**, because
 both frame widths are resized to the same network input. Scale before reading its verdict.
 
 ### Exposure must be locked, and macOS cannot use v4l2-ctl
@@ -622,7 +623,7 @@ MacBook's own frame rate is **not measured**.
    **unmeasured** is capture cost: every latency figure here excludes JPEG decode and no
    camera has ever been attached, so the capture→inference handoff has no number.
    `scripts/robot/camera_checkup.py` exists to collect exactly that on camera day. Nothing
-   yet requests the AVFoundation backend or the Arducam's MJPG 1280×800 mode explicitly;
+   yet requests the AVFoundation backend or the C270's MJPG 1280×720 mode explicitly;
    both open the device with a plain `cv2.VideoCapture(index)`.
 
 4. **The classical detector detects armor plates, not robot chassis.** Its `detect()`
