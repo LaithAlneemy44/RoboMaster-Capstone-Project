@@ -330,3 +330,7 @@ results/onnx_bench_log.txt
 results/onnx_rerun_log.txt
 results/onnx_score_log.txt
 results/framerate_log.txt
+
+# Pico link: downloaded MicroPython firmware, and the WiFi password (see link_secrets.example.py)
+link/firmware/
+link/link_secrets.py

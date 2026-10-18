@@ -1,0 +1,173 @@
+# Pico WiFi link
+
+Wireless command link from the MacBook to the robot's Arduino Mega, through two Raspberry Pi
+Pico 2 WH boards. The MacBook never connects to the robot by wire.
+
+```
+MacBook ──USB serial──▶ LAPTOP Pico ···WiFi UDP···▶ ROBOT Pico ──UART──▶ Arduino Mega
+                        (station)                    (access point)       Serial1, pin 19
+```
+
+| Setting | Value |
+| --- | --- |
+| Network | ROBOT Pico hosts the access point `robo-link` at `192.168.4.1`; LAPTOP joins it |
+| Transport | UDP, port 4210, one command per datagram |
+| Serial | USB serial MacBook → LAPTOP; UART 115200 8N1 ROBOT → Mega |
+| Failsafe | ROBOT sends `S\n` to the Mega after 300 ms with no packet; the Mega also stops on its own after 500 ms of silence on Serial1 |
+
+## Commands
+
+Newline-terminated ASCII:
+
+```
+A,<seq>,<yaw>,<pitch>,<fire>     e.g. A,1234,12.50,-3.20,1
+S                                stop
+```
+
+- `seq`: increasing counter, used by the Mega to detect lost packets.
+- `yaw`, `pitch`: aim angles in degrees.
+- `fire`: `1` fires, `0` doesn't.
+
+**This replaces the draft protocol on this link.** `docs/ROBOT_PROTOCOL.md` and
+`scripts/robot/protocol.py` (`DRV`/`GIM`/`FIRE`/`STOP`/`PING`, turret *rates*, 300 ms stop in
+firmware) were written for a single wired hop and have not been changed to match. `driver.py`,
+`aiming.py` and the GUI still speak the old format. Reconciling the two, including angles versus
+rates, is still open.
+
+## Files
+
+| File | Runs on | Role |
+| --- | --- | --- |
+| `robot_pico_main.py` | ROBOT Pico, as `main.py` | Access point, UDP → UART, 300 ms failsafe |
+| `laptop_pico_main.py` | LAPTOP Pico, as `main.py` | Joins the AP, USB serial lines → UDP |
+| `link_secrets.py` | both Picos | WiFi password. **Gitignored**; create it from `link_secrets.example.py` |
+| `mac_link_test.py` | MacBook | Streams fake aim commands at 50 Hz, for testing without the vision pipeline |
+| `mega_receiver/mega_receiver.ino` | Arduino Mega | Parses commands, echoes them to USB Serial, warns on skipped `seq` |
+| `firmware/` | — | MicroPython `.uf2`, downloaded, gitignored |
+
+## Wiring (ROBOT Pico ↔ Mega)
+
+| Pico 2 WH | Mega 2560 | Notes |
+| --- | --- | --- |
+| Pin 1, GP0 (UART0 TX) | Pin 19 (RX1) | Direct wire. The Pico's 3.3 V high clears the Mega's 3.0 V input threshold |
+| Pin 3, GND | GND | **Common ground is required** |
+| Pin 2, GP1 (UART0 RX) | — | Leave unconnected for now (see below) |
+
+- **If Mega → Pico is ever needed**, Mega TX1 (pin 18) must go through a divider before Pico
+  GP1: 1 kΩ in series, then 2 kΩ to ground, giving about 3.3 V. **Pico pins are not 5 V
+  tolerant**, and a direct wire will damage the Pico.
+- **Power for the ROBOT Pico:**
+  - testing: a USB power bank, or a charge-only USB cable (it needs power only, not data)
+  - on the robot: the 5 V rail into VSYS (pin 39), with ground shared
+- **Use `Serial1` on the Mega, not `Serial`.** Pins 0 and 1 are shared with its USB port.
+
+## Setup
+
+### Tools (MacBook)
+
+```sh
+pip3 install mpremote pyserial
+```
+
+### Password
+
+```sh
+cp link/link_secrets.example.py link/link_secrets.py   # then edit PASSWORD, at least 8 characters
+```
+
+### Flash MicroPython (each Pico, once)
+
+1. Download the **RPI_PICO2_W** build, not PICO_W, from
+   <https://micropython.org/download/RPI_PICO2_W/> into `link/firmware/`. Tested with v1.29.0.
+2. Hold **BOOTSEL** while plugging the Pico into the Mac, then release. A drive called
+   `RP2350` appears. A brand-new Pico shows it without BOOTSEL.
+3. `cp link/firmware/RPI_PICO2_W-*.uf2 /Volumes/RP2350/`. The drive disappears and the Pico
+   reboots into MicroPython. A "Disk Not Ejected Properly" warning is harmless.
+
+BOOTSEL is only for flashing. Don't hold it on normal power-ups, or `main.py` won't run.
+
+### Load the scripts
+
+Find the port with `ls /dev/cu.usbmodem*`. Use `cu.`, not `tty.`.
+
+```sh
+cd link
+# ROBOT
+mpremote connect /dev/cu.usbmodemXXXX cp link_secrets.py :link_secrets.py + cp robot_pico_main.py :main.py
+# LAPTOP
+mpremote connect /dev/cu.usbmodemXXXX cp link_secrets.py :link_secrets.py + cp laptop_pico_main.py :main.py
+```
+
+Both files must be on each Pico; without `link_secrets.py`, `main.py` fails at its import.
+Label the boards. To tell which is which over USB, read the chip ID:
+
+```sh
+mpremote connect /dev/cu.usbmodemXXXX exec "import machine; print(machine.unique_id().hex())"
+```
+
+### Mega
+
+Open `mega_receiver/mega_receiver.ino` in the Arduino IDE, select **Arduino Mega or Mega
+2560**, and upload. Serial Monitor at 115200 shows every parsed command. Fill in the
+`PLACEHOLDER` functions (`setYaw`, `setPitch`, `setFire`, `stopAll`) with the real actuator
+code. They must return immediately: no `delay()`.
+
+## Desk test
+
+### LEDs
+
+| Board | LED | Meaning |
+| --- | --- | --- |
+| ROBOT | steady on | access point is up, no packets yet |
+| ROBOT | toggling | toggles once per packet; at 50 Hz this looks like a fast flicker or dim glow |
+| LAPTOP | off | trying to join `robo-link` |
+| LAPTOP | steady on | joined |
+
+### With one data cable
+
+Only LAPTOP needs data. Power ROBOT from a charge-only cable or power bank.
+
+1. Plug in ROBOT. Its LED comes on steady within a few seconds.
+2. Plug in LAPTOP on the data cable. Its LED comes on steady once joined.
+3. `python3 link/mac_link_test.py /dev/cu.usbmodemXXXX`, then Ctrl-C after a few seconds.
+4. **Pass:** ROBOT's LED flickers while the test runs and stops when it ends.
+
+This proves the full path but measures nothing, because ROBOT's output can't be read.
+
+### With two data cables
+
+Do the same, but capture ROBOT's USB output during the test (pyserial, or
+`mpremote connect <port> repl` under a timeout; don't leave a REPL open). **Pass:**
+
+- `AP up: ('192.168.4.1', ...)` at boot
+- `-> b'A,...'` lines streaming during the test
+- `failsafe stop` about 300 ms after the test stops
+
+Packet rate and loss come from counting `->` lines and gaps in `seq`.
+
+### Results so far (2026-10-18, boards side by side)
+
+- **Signal:** −14 to −27 dBm RSSI, channel 3. LAPTOP joins in about 5 s.
+- **Loss:** 51/51 packets received in a 10 s window at 5 Hz, `seq` 140–190 with no gaps.
+- **Full path at 50 Hz:** MacBook → LAPTOP → ROBOT confirmed by ROBOT's LED. Rate, loss and
+  the failsafe were **not measured** at 50 Hz, because only one data cable was available.
+- **Recovery:** ROBOT was unplugged and replugged with LAPTOP left running. LAPTOP's LED went
+  off, came back on by itself, and commands reached ROBOT again with no restart of LAPTOP. A
+  soft reset of LAPTOP also recovers.
+- **Not yet tested:** range, loss with the robot's motors running, and the Mega end.
+
+## Gotchas
+
+- **LAPTOP's USB serial is also its MicroPython REPL.** Send only plain ASCII lines. A `0x03`
+  byte is Ctrl-C and kills `main.py`, and `0x04` soft-resets it.
+- **LAPTOP rejoins by itself if ROBOT restarts**, for example after a power blip on the
+  robot. Its LED goes off while ROBOT is down and comes back on within about 10–20 s of
+  ROBOT's network returning, with no replug. `connect()` drops any stale association before
+  each attempt and retries every 10 s. Before that fix, LAPTOP never rejoined, and after a
+  soft reset (Ctrl-D) it could report itself joined while nothing reached ROBOT. Both cases
+  were tested and pass (2026-10-18).
+- If `mpremote` can't connect because `main.py` is busy, use
+  `mpremote connect <port> exec "..."`. It interrupts `main.py` first.
+- WiFi power saving is disabled on both Picos for latency.
+- A charge-only micro-USB cable powers a Pico but never shows up on the Mac. If neither a
+  `RP2350` drive nor a `/dev/cu.usbmodem*` appears, try another cable first.
