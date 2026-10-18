@@ -134,9 +134,12 @@ Only LAPTOP needs data. Power ROBOT from a charge-only cable or power bank.
 
 This proves the full path but measures nothing, because ROBOT's output can't be read.
 
-### With two data cables
+### Measuring rate, loss and failsafe
 
-Do the same, but capture ROBOT's USB output during the test (pyserial, or
+Give ROBOT the data cable instead, and have LAPTOP, on a charge-only cable, generate its own
+50 Hz commands with a temporary test `main.py` (restore `laptop_pico_main.py` afterwards).
+With two data cables, run `mac_link_test.py` on LAPTOP as normal instead. Either way, capture
+ROBOT's USB output during the test (pyserial, or
 `mpremote connect <port> repl` under a timeout; don't leave a REPL open). **Pass:**
 
 - `AP up: ('192.168.4.1', ...)` at boot
@@ -149,8 +152,14 @@ Packet rate and loss come from counting `->` lines and gaps in `seq`.
 
 - **Signal:** −14 to −27 dBm RSSI, channel 3. LAPTOP joins in about 5 s.
 - **Loss:** 51/51 packets received in a 10 s window at 5 Hz, `seq` 140–190 with no gaps.
-- **Full path at 50 Hz:** MacBook → LAPTOP → ROBOT confirmed by ROBOT's LED. Rate, loss and
-  the failsafe were **not measured** at 50 Hz, because only one data cable was available.
+- **Full path at 50 Hz:** MacBook → LAPTOP → ROBOT confirmed by ROBOT's LED.
+- **WiFi hop at 50 Hz, measured from ROBOT's output:** 1500/1500 packets in 30 s, 50.1
+  packets/s, `seq` 2163–3662 with **no gaps (0% loss)**. LAPTOP ran a temporary script
+  generating `mac_link_test.py`-format commands at 50 Hz itself, so that ROBOT could have the
+  only data cable. The MacBook → LAPTOP USB hop is not in this number.
+- **Failsafe:** with LAPTOP unplugged mid-stream, ROBOT printed `failsafe stop` once, 271 ms
+  after the last packet as timestamped on the Mac. The Pico's timer is 300 ms, and USB output
+  delivery skews the Mac's timestamps.
 - **Recovery:** ROBOT was unplugged and replugged with LAPTOP left running. LAPTOP's LED went
   off, came back on by itself, and commands reached ROBOT again with no restart of LAPTOP. A
   soft reset of LAPTOP also recovers.
