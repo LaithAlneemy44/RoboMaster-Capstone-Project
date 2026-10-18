@@ -112,6 +112,14 @@ Open `mega_receiver/mega_receiver.ino` in the Arduino IDE, select **Arduino Mega
 `PLACEHOLDER` functions (`setYaw`, `setPitch`, `setFire`, `stopAll`) with the real actuator
 code. They must return immediately: no `delay()`.
 
+From the terminal instead (`brew install arduino-cli`, plus `arduino-cli core install
+arduino:avr` if the Arduino IDE isn't installed), run from `link/`:
+
+```sh
+arduino-cli compile --fqbn arduino:avr:mega mega_receiver
+arduino-cli upload  --fqbn arduino:avr:mega -p /dev/cu.usbmodemXXXX mega_receiver
+```
+
 ## Desk test
 
 ### LEDs
@@ -163,7 +171,12 @@ Packet rate and loss come from counting `->` lines and gaps in `seq`.
 - **Recovery:** ROBOT was unplugged and replugged with LAPTOP left running. LAPTOP's LED went
   off, came back on by itself, and commands reached ROBOT again with no restart of LAPTOP. A
   soft reset of LAPTOP also recovers.
-- **Not yet tested:** range, loss with the robot's motors running, and the Mega end.
+- **Mega sketch:** compiles cleanly for the Mega 2560 with all warnings on (arduino-cli
+  1.5.1, arduino:avr 1.8.8): 6.9 KB flash (3%), 459 B RAM (5%). Its parser was also tested
+  on the Mac against valid, malformed, overlong and out-of-order lines. It has not run on a
+  Mega.
+- **Not yet tested:** range, loss with the robot's motors running, and the Mega receiving
+  real commands on Serial1.
 
 ## Gotchas
 
