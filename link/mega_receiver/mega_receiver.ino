@@ -71,6 +71,7 @@ void stopAll() {
 void handleStop(const __FlashStringHelper *why) {
   stopAll();
   stopped = true;
+  digitalWrite(LED_BUILTIN, LOW);
   Serial.print(F("STOP ("));
   Serial.print(why);
   Serial.println(F(")"));
@@ -143,6 +144,7 @@ void handleLine(char *line) {
   setYaw(cmdYaw);
   setPitch(cmdPitch);
   setFire(cmdFire);
+  digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));  // toggles per command, like the ROBOT Pico
 
   Serial.print(F("A seq="));
   Serial.print(cmdSeq);
@@ -157,6 +159,8 @@ void handleLine(char *line) {
 void setup() {
   Serial.begin(DEBUG_BAUD);
   Serial1.begin(LINK_BAUD);
+  pinMode(LED_BUILTIN, OUTPUT);   // pin 13: flickers while commands arrive, off when stopped
+  digitalWrite(LED_BUILTIN, LOW);
   stopAll();
   Serial.println(F("mega_receiver ready, listening on Serial1"));
 }

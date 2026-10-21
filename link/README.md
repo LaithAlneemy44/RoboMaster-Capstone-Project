@@ -130,6 +130,8 @@ arduino-cli upload  --fqbn arduino:avr:mega -p /dev/cu.usbmodemXXXX mega_receive
 | ROBOT | toggling | toggles once per packet; at 50 Hz this looks like a fast flicker or dim glow |
 | LAPTOP | off | trying to join `robo-link` |
 | LAPTOP | steady on | joined |
+| Mega | flickering (pin 13, `L`) | valid `A` commands arriving on Serial1 |
+| Mega | off | no commands yet, or stopped (link `S` or its own 500 ms timeout) |
 
 ### With one data cable
 
@@ -177,6 +179,41 @@ Packet rate and loss come from counting `->` lines and gaps in `seq`.
   Mega.
 - **Not yet tested:** range, loss with the robot's motors running, and the Mega receiving
   real commands on Serial1.
+
+### Results 2026-10-21 (MKR Zero standing in for the Mega)
+
+- **Full path to a receiver works:** MacBook → LAPTOP → WiFi → ROBOT → UART → MKR Zero.
+  `flash_test_gui.py` key presses played the right LED pattern on the MKR, with the ROBOT
+  Pico powered from the MKR's 5V pin into VSYS.
+- **AP stall, once:** after a few minutes of testing, ROBOT kept beaconing `robo-link` but
+  LAPTOP's joins failed (status −1 within 3 s, signal −22 dBm). Only a ROBOT power cycle
+  cleared it. Cause unknown; a power dip through a push-on jumper is suspected.
+- **Self-restart added to `robot_pico_main.py`:** it restarts the AP after 120 s with no
+  packets, or 20 s with no associated station.
+  - The 120 s rule **fired as designed** (16:28:02, AP back in 1 s).
+  - The 20 s rule **did not fire** within ~60 s of unplugging LAPTOP, although
+    `ap.status("stations")` returned `[]` when queried afterwards. **Unverified; debug next.**
+  - LAPTOP's LED did not go off when the AP restarted, so LAPTOP may keep a stale
+    association after an AP restart. Check that it actually rejoins.
+
+### Flash test with a spare board (no Mega)
+
+`flash_test_gui.py` is a stripped-down copy of the driver-station GUI. Each key press sends one
+`L,<seq>,<code>` line through the link, and `mkr_flash_test/mkr_flash_test.ino` (Arduino MKR
+Zero) plays a matching pattern on its built-in LED. Keys: `1`-`5` blink that many times, `F`
+fast flicker, `H` hold on 1 s, `0`/Esc off. It tests the link only: no movement commands.
+
+- **Wiring:** Pico GP0 (pin 1) → MKR pin 13 (RX), and GND → GND. Both boards are 3.3 V.
+- **Upload:** `arduino-cli upload --fqbn arduino:samd:mkrzero -p /dev/cu.usbmodemXXXX mkr_flash_test`
+  (`arduino-cli core install arduino:samd` once). It blinks 3 times quickly on boot.
+- **The port vanishing after an upload** was macOS missing the board's microsecond-long USB
+  drop on a software reset; it came back only on a replug. The sketch now detaches from USB for
+  500 ms after any non-power-on reset, and the port returned unaided on 3/3 uploads
+  (2026-10-21, through the USB-C multiport adapter's hub). Other SAMD sketches need the same.
+- **Run:** `.venv/bin/python link/flash_test_gui.py`, pick LAPTOP's port, then optionally the
+  MKR's port as the receiver, to see what it parsed in the same window.
+- The ROBOT Pico sends `S` 300 ms after every key press (its failsafe). The MKR only logs it,
+  or every pattern would be cut short.
 
 ## Gotchas
 

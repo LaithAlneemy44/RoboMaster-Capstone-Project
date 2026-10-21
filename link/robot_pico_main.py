@@ -13,30 +13,58 @@ PORT = 4210
 FAILSAFE_MS = 300             # no packet for this long -> send stop
 STOP_CMD = b"S\n"
 
+# Self-recovery. On 2026-10-21 the AP stalled mid-test: it kept beaconing but refused
+# every join (LAPTOP status -1 within 3 s) until ROBOT was power-cycled. Cause unknown,
+# possibly a power dip through a jumper. Restarting the AP from here clears the same state.
+NO_STATION_RESTART_MS = 20000    # nobody associated this long -> restart AP
+SILENCE_RESTART_MS = 120000      # no packet this long -> restart AP (dead-but-associated link)
+CHECK_MS = 1000
+
 led = Pin("LED", Pin.OUT)
 
 # --- WiFi access point ---
 ap = network.WLAN(network.AP_IF)
-ap.config(essid=SSID, password=PASSWORD)
-ap.active(True)
-while not ap.active():
-    time.sleep_ms(50)
-try:
-    ap.config(pm=network.WLAN.PM_NONE)   # disable power saving for latency
-except Exception:
-    pass
-print("AP up:", ap.ifconfig())           # default IP is 192.168.4.1
-led.on()                                 # power/AP indicator; toggles per packet from here
+
+
+def start_ap():
+    ap.config(essid=SSID, password=PASSWORD)
+    ap.active(True)
+    while not ap.active():
+        time.sleep_ms(50)
+    try:
+        ap.config(pm=network.WLAN.PM_NONE)   # disable power saving for latency
+    except Exception:
+        pass
+    print("AP up:", ap.ifconfig())           # default IP is 192.168.4.1
+    led.on()                                 # power/AP indicator; toggles per packet from here
+
+
+def open_socket():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.bind(("0.0.0.0", PORT))
+    s.setblocking(False)
+    return s
+
+
+def station_count():
+    # None if this firmware can't report stations; the silence rule still applies then.
+    try:
+        return len(ap.status("stations"))
+    except Exception:
+        return None
+
+
+start_ap()
 
 # --- UART to Arduino Mega: GP0 = TX, GP1 = RX ---
 uart = UART(0, baudrate=115200, tx=Pin(0), rx=Pin(1))
 
 # --- UDP socket ---
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sock.bind(("0.0.0.0", PORT))
-sock.setblocking(False)
+sock = open_socket()
 
 last_rx = time.ticks_ms()
+last_station = last_rx
+last_check = last_rx
 stopped = True
 
 while True:
@@ -56,3 +84,26 @@ while True:
         uart.write(STOP_CMD)
         print("failsafe stop")
         stopped = True
+
+    if time.ticks_diff(now, last_check) >= CHECK_MS:
+        last_check = now
+        n = station_count()
+        if n is None or n > 0:
+            last_station = now
+        reason = None
+        if time.ticks_diff(now, last_station) > NO_STATION_RESTART_MS:
+            reason = "no station associated"
+        elif time.ticks_diff(now, last_rx) > SILENCE_RESTART_MS:
+            reason = "no packets"
+        if reason:
+            print("restarting AP:", reason)
+            if not stopped:                  # unreachable after 300 ms, but never skip a stop
+                uart.write(STOP_CMD)
+                stopped = True
+            sock.close()
+            ap.active(False)
+            time.sleep_ms(500)
+            start_ap()
+            sock = open_socket()
+            now = time.ticks_ms()
+            last_rx = last_station = last_check = now
