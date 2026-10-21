@@ -105,6 +105,11 @@ Label the boards. To tell which is which over USB, read the chip ID:
 mpremote connect /dev/cu.usbmodemXXXX exec "import machine; print(machine.unique_id().hex())"
 ```
 
+| Board | Chip ID | `main.py` |
+| --- | --- | --- |
+| ROBOT | `ad6515c01640a363` | `robot_pico_main.py` |
+| LAPTOP | `6e433c0184bf5a76` | `laptop_pico_main.py` |
+
 ### Mega
 
 Open `mega_receiver/mega_receiver.ino` in the Arduino IDE, select **Arduino Mega or Mega
