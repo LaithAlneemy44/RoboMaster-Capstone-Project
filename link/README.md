@@ -5,13 +5,15 @@ Pico 2 WH boards. The MacBook never connects to the robot by wire.
 
 ```
 MacBook ──USB serial──▶ LAPTOP Pico ···WiFi UDP···▶ ROBOT Pico ──UART──▶ Arduino Mega
+        ◀──────────────               ◀···········              ◀──────   (telemetry, optional)
                         (station)                    (access point)       Serial1, pin 19
 ```
 
 | Setting | Value |
 | --- | --- |
 | Network | ROBOT Pico hosts the access point `robo-link` at `192.168.4.1`; LAPTOP joins it |
-| Transport | UDP, port 4210, one command per datagram |
+| Transport | UDP, port 4210, one line per datagram. Both Picos relay lines verbatim, so the link carries any newline-framed ASCII protocol |
+| Return path | Lines the receiver sends on ROBOT's GP1 go back to the sender of the last command, and LAPTOP writes them to USB serial |
 | Serial | USB serial MacBook → LAPTOP; UART 115200 8N1 ROBOT → Mega |
 | Failsafe | ROBOT sends `S\n` to the Mega after 300 ms with no packet; the Mega also stops on its own after 500 ms of silence on Serial1 |
 
@@ -34,12 +36,20 @@ firmware) were written for a single wired hop and have not been changed to match
 `aiming.py` and the GUI still speak the old format. Reconciling the two, including angles versus
 rates, is still open.
 
+**Both formats have now crossed the link.** The relay doesn't parse lines, so this is a
+receiver decision, not a link one. On 2026-10-28 the unchanged driver-station GUI
+(`scripts/robot_gui.py --driver serial`) drove `mkr_station_test` in the GUI's own format,
+with its STA telemetry coming back. That shows the GUI's format works over the relay; it
+doesn't choose it.
+
 ## Files
 
 | File | Runs on | Role |
 | --- | --- | --- |
-| `robot_pico_main.py` | ROBOT Pico, as `main.py` | Access point, UDP → UART, 300 ms failsafe |
-| `laptop_pico_main.py` | LAPTOP Pico, as `main.py` | Joins the AP, USB serial lines → UDP |
+| `robot_pico_main.py` | ROBOT Pico, as `main.py` | Access point, UDP → UART, UART replies → UDP, 300 ms failsafe, AP self-restart |
+| `laptop_pico_main.py` | LAPTOP Pico, as `main.py` | Joins the AP, USB serial lines → UDP, UDP replies → USB serial |
+| `flash_test_gui.py` + `mkr_flash_test/` | MacBook + MKR Zero | Key presses → LED patterns, one-way |
+| `mkr_station_test/mkr_station_test.ino` | MKR Zero | Speaks the GUI's protocol and answers with STA, so the real GUI runs against it |
 | `link_secrets.py` | both Picos | WiFi password. **Gitignored**; create it from `link_secrets.example.py` |
 | `mac_link_test.py` | MacBook | Streams fake aim commands at 50 Hz, for testing without the vision pipeline |
 | `mega_receiver/mega_receiver.ino` | Arduino Mega | Parses commands, echoes them to USB Serial, warns on skipped `seq` |
@@ -51,7 +61,7 @@ rates, is still open.
 | --- | --- | --- |
 | Pin 1, GP0 (UART0 TX) | Pin 19 (RX1) | Direct wire. The Pico's 3.3 V high clears the Mega's 3.0 V input threshold |
 | Pin 3, GND | GND | **Common ground is required** |
-| Pin 2, GP1 (UART0 RX) | — | Leave unconnected for now (see below) |
+| Pin 2, GP1 (UART0 RX) | — | Return path. Unconnected on the Mega for now (see below) |
 
 - **If Mega → Pico is ever needed**, Mega TX1 (pin 18) must go through a divider before Pico
   GP1: 1 kΩ in series, then 2 kΩ to ground, giving about 3.3 V. **Pico pins are not 5 V
@@ -219,6 +229,31 @@ fast flicker, `H` hold on 1 s, `0`/Esc off. It tests the link only: no movement 
   MKR's port as the receiver, to see what it parsed in the same window.
 - The ROBOT Pico sends `S` 300 ms after every key press (its failsafe). The MKR only logs it,
   or every pattern would be cut short.
+
+### Real GUI against an MKR Zero (no Mega)
+
+`mkr_station_test` lets the unchanged driver-station GUI run over the link with nothing that
+moves. The GUI blocks drive, turret and fire whenever telemetry is silent for 1 s, so this test
+needs the return path.
+
+- **Wiring (4 jumpers):** Pico GP0 (pin 1) → MKR 13 RX; MKR 14 TX → Pico GP1 (pin 2); MKR 5V →
+  Pico VSYS (pin 39); GND → GND. Both boards are 3.3 V, so no divider.
+- **Cables:** power → MKR (it powers ROBOT through VSYS), data → LAPTOP, camera → Mac.
+- **Run:** `.venv/bin/python scripts/robot_gui.py --driver serial --port /dev/cu.usbmodemXXXX
+  --source 0 --weights runs/detect/fast_640/weights/best.pt --imgsz 640`
+- **MKR LED:** on while any drive or turret key is held; 3 quick flashes on FIRE.
+- The MKR answers with STA only while PINGs arrive, so "link: OK" means the round trip works.
+  It has no battery sensor, so the GUI shows 0% battery.
+
+### Results 2026-10-28 (real GUI, C270, MKR Zero)
+
+- **Round trip measured at the serial level:** 51 STA lines in 5 s (10 Hz), the first 0.1 s
+  after the first PING. One second of `GIM 0.5 0` moved the reported pitch from 0° to 9°,
+  so commands reach the receiver and its replies reflect them.
+- **The real GUI worked end to end** (user-verified): LIVE banner, link OK, camera image, and
+  the MKR LED following the keys.
+- **The C270 opened as index 0 at 1280×960**, a 4:3 mode, not the 1280×720 the handoff
+  expects. The training footage is 16:9, so check what frame the detector actually gets.
 
 ## Gotchas
 

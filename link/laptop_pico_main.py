@@ -1,6 +1,7 @@
 # Laptop-side Pico 2 WH: joins the robot Pico's access point, reads
 # newline-terminated commands from the MacBook over USB serial and sends
-# each one as a UDP packet. Save to the Pico as main.py.
+# each one as a UDP packet. Datagrams coming back (telemetry from the robot)
+# are written to USB serial for the MacBook. Save to the Pico as main.py.
 
 import network
 import socket
@@ -43,6 +44,7 @@ def connect():
 
 connect()
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.setblocking(False)
 
 poller = select.poll()
 poller.register(sys.stdin, select.POLLIN)
@@ -57,3 +59,9 @@ while True:
                 sock.sendto(line.encode(), ROBOT)
             except OSError:
                 pass
+    try:
+        reply = sock.recv(128)
+    except OSError:
+        reply = None
+    if reply:
+        sys.stdout.write(reply.decode())

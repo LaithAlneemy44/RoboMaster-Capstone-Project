@@ -1,6 +1,7 @@
 # Robot-side Pico 2 WH: hosts the WiFi access point, receives UDP
 # commands from the laptop-side Pico and forwards them to the Arduino Mega
-# over UART. Save to the Pico as main.py so it runs on power-up.
+# over UART. Lines the receiver sends back on GP1 (telemetry) go to whoever
+# sent the last command. Save to the Pico as main.py so it runs on power-up.
 
 import network
 import socket
@@ -62,6 +63,9 @@ uart = UART(0, baudrate=115200, tx=Pin(0), rx=Pin(1))
 # --- UDP socket ---
 sock = open_socket()
 
+reply_to = None                  # address of the last command's sender
+uart_buf = b""
+
 last_rx = time.ticks_ms()
 last_station = last_rx
 last_check = last_rx
@@ -69,9 +73,24 @@ stopped = True
 
 while True:
     try:
-        data = sock.recv(64)
+        data, reply_to = sock.recvfrom(64)
     except OSError:
         data = None
+
+    # Return path: complete lines from the receiver, one per datagram. Dropped until a
+    # command has arrived, since there is nobody to send them to before that.
+    chunk = uart.read()
+    if chunk:
+        uart_buf += chunk
+        while b"\n" in uart_buf:
+            line, uart_buf = uart_buf.split(b"\n", 1)
+            if reply_to and line:
+                try:
+                    sock.sendto(line + b"\n", reply_to)
+                except OSError:
+                    pass
+        if len(uart_buf) > 256:          # no newline in sight: line noise, not a message
+            uart_buf = b""
 
     now = time.ticks_ms()
     if data:
@@ -105,5 +124,6 @@ while True:
             time.sleep_ms(500)
             start_ap()
             sock = open_socket()
+            reply_to = None
             now = time.ticks_ms()
             last_rx = last_station = last_check = now
