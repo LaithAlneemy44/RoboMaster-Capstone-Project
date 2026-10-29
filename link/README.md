@@ -117,8 +117,10 @@ mpremote connect /dev/cu.usbmodemXXXX exec "import machine; print(machine.unique
 
 | Board | Chip ID | `main.py` |
 | --- | --- | --- |
-| ROBOT | `ad6515c01640a363` | `robot_pico_main.py` |
-| LAPTOP | `6e433c0184bf5a76` | `laptop_pico_main.py` |
+| ROBOT | `6e433c0184bf5a76` | `robot_pico_main.py` |
+| LAPTOP | `ad6515c01640a363` | `laptop_pico_main.py` |
+
+The roles were swapped on 2026-10-29, when the ROBOT board went onto the robot's breadboard.
 
 ### Mega
 
@@ -254,6 +256,30 @@ needs the return path.
   the MKR LED following the keys.
 - **The C270 opened as index 0 at 1280×960**, a 4:3 mode, not the 1280×720 the handoff
   expects. The training footage is 16:9, so check what frame the detector actually gets.
+
+### Mega with the real GUI (`mega_station_test`), 2026-10-29: in progress
+
+Same test as the MKR, on the Mega: every GUI key gives a different flash count on the Mega's
+`L` LED (table at the top of the sketch). The Mega's TX1 is 5 V, so it reaches the Pico
+through a divider of three 1 kΩ resistors, giving about 3.3 V:
+
+```
+Mega TX1 (18) ──[1 kΩ]──●──[1 kΩ]──[1 kΩ]── GND (Mega GND + Pico GND)
+                        └── Pico GP1 (pin 2)
+Pico GP0 (pin 1) ── Mega RX1 (19)      direct
+Mega 5V          ── Pico VSYS (pin 39)  powers the robot Pico
+```
+
+- **Built on the robot's breadboard** in columns 20/25/30/35, away from the Pico (columns
+  41–60). The printed column numbers on that board sit about one hole off; count holes.
+- **The Mega side works:** commands sent over its own USB (the sketch accepts both) were all
+  parsed: W, D, I, L, FIRE.
+- **Nothing crossed the link to it.** LAPTOP was joined to `robo-link` (−57 dBm, also after a
+  fresh rejoin), but ROBOT's LED stayed steady while commands were sent, so ROBOT wasn't
+  receiving or forwarding. A ROBOT power cycle didn't help.
+- **Next step:** read ROBOT's USB output with its 5V jumper pulled. The robot script was
+  flashed onto `6e433c0184bf5a76` today and never boot-checked on that board. A crash right
+  after `led.on()` would look exactly like this: AP up, LED steady, nothing forwarded.
 
 ## Gotchas
 
