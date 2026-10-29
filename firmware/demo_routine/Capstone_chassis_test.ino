@@ -17,8 +17,10 @@ const byte RR = 3;
 // Updated pin assignments
 // const byte DIR_PINS[4] = {4, 6, 11, 9};
 // const byte PWM_PINS[4] = {5, 7, 10, 8};
-const byte DIR_PINS[4] = {4, 7, 12, 8};
-const byte PWM_PINS[4] = {5, 6, 10, 9};
+// const byte DIR_PINS[4] = {4, 7, 12, 8};
+// const byte PWM_PINS[4] = {5, 6, 10, 9};
+const byte DIR_PINS[4] = {22, 23, 24, 25};
+const byte PWM_PINS[4] = {5, 6, 8, 11}; 
 
 // Set true where physical motor orientation
 // requires the direction to be reversed.
