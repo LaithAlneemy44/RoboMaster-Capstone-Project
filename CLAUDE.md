@@ -173,6 +173,25 @@ encoder feedback, and a firmware rule to stop all motion after 300 ms of silence
 USB port unchanged. Treat it as a proposal, not a contract: whether it survives the relay,
 rates versus angles, and which hop enforces the 300 ms stop are exactly items 1–4.
 
+**The Picos have arrived and the link is built: `link/`, with `link/README.md` as its
+authoritative record.** It implements items 1–3 as working proposals: USB serial to LAPTOP,
+UDP port 4210 with ROBOT hosting the `robo-link` AP, and UART 115200 from ROBOT GP0/GP1 to the
+receiver. There's a return path for telemetry, and a 300 ms failsafe on ROBOT. The relay
+doesn't parse lines, so item 4 stays a receiver decision: the README's `A,…` format and the
+GUI's `DRV`/`GIM` format have both crossed it. The unchanged GUI ran end to end against an
+MKR Zero stand-in on 2026-10-28. The Mega leg failed on 2026-10-29, and 2026-10-30 narrowed
+the break to between ROBOT's pins and the Mega: a loopback returned every command. Read the
+README before touching the link. Lessons from that debugging:
+- **Confirm packets from ROBOT's USB output, returning STA, or the Mega's log, never from
+  ROBOT's LED alone.** Per-packet flipping let paired commands cancel out, and a working link
+  looked dead for a day. The LED is now rate-limited, but verify it's flashed.
+- **Check a Pico's chip ID** (README table) before flashing. The two boards are identical
+  and have been swapped and confused.
+- **The Mega's TX1 is 5 V**, so it reaches Pico GP1 through a divider of three 1 kΩ
+  resistors (~3.3 V). The Mega's 3.3V pin gives 50 mA, too little to power a Pico. It's a
+  generic Mega 2560 R3: the official A000067 pinout applies, but trust the board's silkscreen
+  for TX1 18 / RX1 19.
+
 ### On the MacBook specifically
 
 A fresh clone there has the code, `fast_640` and `fast_960`, and a test clip. It does
@@ -244,19 +263,18 @@ Three things will go wrong in order:
 
 ## Current status
 
-- **Camera capture code exists, but has never run against a real camera.**
-  `scripts/robot/vision.py` (`FrameSource`) and `scripts/robot/camera_checkup.py` open
-  devices with a plain `cv2.VideoCapture(index)`, which the standard opencv-python build
-  resolves to AVFoundation on macOS. Nothing requests `cv2.CAP_AVFOUNDATION` explicitly
-  or sets this camera's MJPG format and 1280×720 mode. The next software step is bringing
-  that code up against the C270 on the MacBook and hardening it, not writing a second
-  capture path beside it.
+- **The C270 has run in the GUI, but capture is not measured or hardened.** On
+  2026-10-28 the GUI showed its image live on the MacBook as device 0. It opened at
+  **1280×960 (4:3)**, not the 1280×720 the handoff assumes, so check what frame the detector
+  actually gets. `scripts/robot/vision.py` (`FrameSource`) and
+  `scripts/robot/camera_checkup.py` still use a plain `cv2.VideoCapture(index)`, with no
+  explicit `CAP_AVFOUNDATION`, MJPG or 720p mode. Harden that code; don't write a second
+  capture path.
 - **Tracker parameters are hard-coded for 30 fps** and need re-tuning once the deployed
   frame rate on the MacBook is measured. `run_trackers.rescale_temporal()` already rescales
   `max_age`/`min_hits` by frame stride; the GUI's `vision.AutoTracker` does not call it.
   Every tracker score so far was on whole robots, while the GUI tracks armor plates.
-- **The Picos will not arrive before the October 2026 prototype showing.** That demo does
-  not use the vision system: it runs a scripted move, rotate, shoot and collect routine
+- **The October 2026 prototype showing did not use the vision system or the Picos:** it runs a scripted move, rotate, shoot and collect routine
   coded into the Arduino Mega firmware and started on power-up. That sketch is
   `firmware/demo_routine/demo_routine.ino`: it builds for the Mega and for an Uno (the
   drive test board), picking the pin set at compile time. Every pin is still a placeholder,
@@ -284,8 +302,10 @@ What is actually open, roughly in order of value:
    the real unit and its exposure value needs tuning once against arena lighting.
 4. **Confidence threshold is hardcoded 0.25 in six files and was never swept** — that is
    the live system's operating point, and it is unexplored (handoff issue 9).
-5. **The robot control link** — the open decisions under *Deployment architecture*. Blocked
-   until the Picos arrive, and not to be settled by default in code.
+5. **The robot control link.** The Picos are here and the relay works up to ROBOT's pins
+   (see *Deployment architecture* and `link/README.md`). Open: the Mega leg (failed on
+   2026-10-29, cause between ROBOT's pins and the Mega), the AP self-restart's untested 20 s
+   rule, and the protocol decisions, which are still not to be settled by default in code.
 6. Remaining smaller gaps are enumerated as the 12 numbered issues in `CAMERA_HANDOFF.md`.
 
 **Finish measurement before adding models.** The comparison is already broad enough to
