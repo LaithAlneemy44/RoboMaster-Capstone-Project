@@ -42,9 +42,14 @@ def connect():
             time.sleep_ms(100)
 
 
+def open_socket():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.setblocking(False)
+    return s
+
+
 connect()
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sock.setblocking(False)
+sock = open_socket()
 
 poller = select.poll()
 poller.register(sys.stdin, select.POLLIN)
@@ -52,13 +57,22 @@ poller.register(sys.stdin, select.POLLIN)
 while True:
     if not wlan.isconnected():
         connect()
+        sock.close()
+        sock = open_socket()
     if poller.poll(10):
         line = sys.stdin.readline()
         if line:
             try:
                 sock.sendto(line.encode(), ROBOT)
-            except OSError:
-                pass
+            except OSError as e:
+                # Was silently dropped before 2026-10-30, which hid a relay that stopped
+                # forwarding after both Picos powered up together. Say so, and start over
+                # with a fresh socket and association. The host ignores this line: it
+                # parses only STA/ACK/ERR.
+                print("send failed:", e)
+                sock.close()
+                connect()
+                sock = open_socket()
     try:
         reply = sock.recv(128)
     except OSError:

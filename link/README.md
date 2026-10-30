@@ -117,10 +117,10 @@ mpremote connect /dev/cu.usbmodemXXXX exec "import machine; print(machine.unique
 
 | Board | Chip ID | `main.py` |
 | --- | --- | --- |
-| ROBOT | `6e433c0184bf5a76` | `robot_pico_main.py` |
-| LAPTOP | `ad6515c01640a363` | `laptop_pico_main.py` |
+| ROBOT | `ad6515c01640a363` | `robot_pico_main.py` |
+| LAPTOP | `6e433c0184bf5a76` | `laptop_pico_main.py` |
 
-The roles were swapped on 2026-10-29, when the ROBOT board went onto the robot's breadboard.
+The roles were swapped on 2026-10-29 and swapped back on 2026-10-30.
 
 ### Mega
 
@@ -144,7 +144,7 @@ arduino-cli upload  --fqbn arduino:avr:mega -p /dev/cu.usbmodemXXXX mega_receive
 | Board | LED | Meaning |
 | --- | --- | --- |
 | ROBOT | steady on | access point is up, no packets yet |
-| ROBOT | toggling | toggles once per packet; at 50 Hz this looks like a fast flicker or dim glow |
+| ROBOT | flickering | packets arriving; flips at most every 200 ms, so any steady stream visibly flickers |
 | LAPTOP | off | trying to join `robo-link` |
 | LAPTOP | steady on | joined |
 | Mega | flickering (pin 13, `L`) | valid `A` commands arriving on Serial1 |
@@ -274,12 +274,38 @@ Mega 5V          ── Pico VSYS (pin 39)  powers the robot Pico
   41–60). The printed column numbers on that board sit about one hole off; count holes.
 - **The Mega side works:** commands sent over its own USB (the sketch accepts both) were all
   parsed: W, D, I, L, FIRE.
-- **Nothing crossed the link to it.** LAPTOP was joined to `robo-link` (−57 dBm, also after a
-  fresh rejoin), but ROBOT's LED stayed steady while commands were sent, so ROBOT wasn't
-  receiving or forwarding. A ROBOT power cycle didn't help.
-- **Next step:** read ROBOT's USB output with its 5V jumper pulled. The robot script was
-  flashed onto `6e433c0184bf5a76` today and never boot-checked on that board. A crash right
-  after `led.on()` would look exactly like this: AP up, LED steady, nothing forwarded.
+- **Nothing reached the Mega.** Its own log showed no commands and no STA came back, with
+  LAPTOP joined to `robo-link` (−57 dBm, also after a fresh rejoin).
+- ~~ROBOT's LED stayed steady, so ROBOT wasn't receiving.~~ **Wrong, see 2026-10-30.** The
+  LED couldn't show that.
+
+**2026-10-30, narrowing it down without the Mega:**
+- **The robot script doesn't crash.** On USB power, `6e433c…` booted, brought the AP up and sat
+  in its main loop when interrupted.
+- **The Pico-to-Pico link works.** With roles swapped back (`ad6515…` as ROBOT on USB, LAPTOP
+  on a charge-only cable running a temporary self-sending script), ROBOT received 321 of 322
+  datagrams in 30 s with no `seq` gaps.
+- **The "steady LED" evidence was an artifact.** ROBOT flipped its LED on every packet, and
+  every failing test sent PING and GIM back to back, so each pair flipped it off and straight
+  back on, too fast to see. A busy link looked identical to a dead one. Every test that sent
+  single commands flickered, including Mac → LAPTOP script → ROBOT with ROBOT powered through
+  jumpers from LAPTOP's VBUS. Fixed in `robot_pico_main.py`: the LED now flips at most every
+  200 ms. Flashed onto ROBOT (`ad6515…`) on 2026-10-30; it boots and brings the AP up.
+- **So the relay probably worked on 2026-10-29 too, and the break was after ROBOT:** the
+  GP0 → Mega RX1 (19) wire or its breadboard contact, or the Mega's Serial1 input, which was
+  never tested on its own (only its USB input was). Next test: ROBOT's USB output and the
+  Mega's log read at the same time, to see where commands stop. Don't diagnose from the LED.
+- **Loopback, 2026-10-30: everything up to ROBOT's pins works.** ROBOT GP0 (pin 1) jumpered
+  to its own GP1 (pin 2), ROBOT on a charge-only cable, LAPTOP on the Mac. 145 of 145 `PING`s
+  came back to the Mac, plus ROBOT's own failsafe `S`. That covers Mac → LAPTOP → WiFi →
+  ROBOT → UART TX → UART RX → ROBOT → WiFi → LAPTOP → Mac. **The 2026-10-29 break was
+  between ROBOT's pins and the Mega:** the Pico's contact in the robot breadboard, a wire one
+  column or one Mega hole off, or (least likely) the Mega's Serial1.
+- `laptop_pico_main.py` no longer swallows `sendto` errors: it prints `send failed: …` and
+  rejoins with a fresh socket. No error has appeared yet; it was added while chasing this.
+- **The Mega is a generic Mega 2560 R3** (ATmega2560 + 16U2). The official A000067 pinout
+  applies, but its TX/RX table has typos; trust the board's silkscreen for TX1 18 / RX1 19.
+  Its 3.3V pin gives 50 mA, too little for the Pico.
 
 ## Gotchas
 

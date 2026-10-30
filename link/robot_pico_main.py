@@ -21,6 +21,11 @@ NO_STATION_RESTART_MS = 20000    # nobody associated this long -> restart AP
 SILENCE_RESTART_MS = 120000      # no packet this long -> restart AP (dead-but-associated link)
 CHECK_MS = 1000
 
+# The LED flips at most this often while packets arrive. Flipping on every packet made an
+# even burst (the GUI sends PING and GIM back to back) cancel out, so a busy link looked
+# exactly like a dead one (2026-10-30).
+LED_MIN_FLIP_MS = 200
+
 led = Pin("LED", Pin.OUT)
 
 # --- WiFi access point ---
@@ -37,7 +42,7 @@ def start_ap():
     except Exception:
         pass
     print("AP up:", ap.ifconfig())           # default IP is 192.168.4.1
-    led.on()                                 # power/AP indicator; toggles per packet from here
+    led.on()                                 # power/AP indicator; flickers while packets arrive
 
 
 def open_socket():
@@ -69,6 +74,7 @@ uart_buf = b""
 last_rx = time.ticks_ms()
 last_station = last_rx
 last_check = last_rx
+last_flip = last_rx
 stopped = True
 
 while True:
@@ -96,7 +102,9 @@ while True:
     if data:
         uart.write(data)
         print("->", data)                # visible over USB when testing on the Mac
-        led.toggle()
+        if time.ticks_diff(now, last_flip) >= LED_MIN_FLIP_MS:
+            led.toggle()
+            last_flip = now
         last_rx = now
         stopped = False
     elif not stopped and time.ticks_diff(now, last_rx) > FAILSAFE_MS:
